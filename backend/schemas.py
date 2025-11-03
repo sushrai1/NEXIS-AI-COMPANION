@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, constr # Import constr
+from pydantic import BaseModel, EmailStr, constr, Field
 from enum import Enum
 from typing import Optional, List  
 from datetime import datetime      
@@ -16,7 +16,6 @@ class UserBase(BaseModel):
 
 # Schema for registration
 class UserCreate(UserBase):
-    # The fix is here: validating the password length
     password: constr(max_length=72)
     role: UserRole = UserRole.user
 
@@ -31,7 +30,6 @@ class UserResponse(UserBase):
     role: UserRole
 
     class Config:
-        # Using the correct attribute for Pydantic v2
         from_attributes = True
 
 # Schema for submitting a survey
@@ -48,3 +46,30 @@ class SurveyResultResponse(PHQ9Submit):
 
     class Config:
         from_attributes = True # for orm_mode
+
+class QuickThoughtCreate(BaseModel):
+    text_content: str = Field(..., min_length=1, max_length=1000)
+
+# Schema for returning a quick thought from the API
+class QuickThoughtResponse(BaseModel):
+    id: int
+    text_content: str
+    sentiment_score: Optional[float] = None 
+    created_at: datetime
+    owner_id: int
+
+    class Config:
+        from_attributes = True # for orm_mode (Pydantic v2)
+
+class MoodEntryBase(BaseModel):
+    mood_label: str
+    mood_score: Optional[float] = None
+    created_at: datetime
+
+'''
+class MoodEntryResponse(MoodEntryBase):
+    id: int
+    owner_id: int
+
+    class Config:
+        from_attributes = True # for orm_mode'''

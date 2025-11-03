@@ -37,10 +37,10 @@ export default function Home() {
               <span className="text-sky-600">Reclaim Your Balance.</span>
             </h1>
             <p className="max-w-3xl mx-auto text-lg text-slate-600 mb-10">
-              Nexis is your private, multimodal AI companion for mental well-being. It listens, sees, and understands to provide real-time support—securely on your device.
+              Nexis is your private, multimodal AI companion for mental well-being. It listens, sees, and understands to provide real-time support—securely.
             </p>
             <Link to="/register" className="bg-sky-500 text-white px-8 py-3 rounded-full shadow-lg hover:bg-sky-600 transition-transform hover:scale-105 text-lg font-semibold">
-              Get Started for Free
+              Get Started
             </Link>
           </div>
         </section>
@@ -54,12 +54,12 @@ export default function Home() {
               <div className="flex flex-col items-center">
                 <IconPlaceholder />
                 <h3 className="text-xl font-semibold mb-2">1. Check-in Naturally</h3>
-                <p className="text-slate-500">Share your thoughts through text, voice, or a simple video check-in. It's intuitive and takes seconds.</p>
+                <p className="text-slate-500">Share your thoughts through text, voice, or a simple video check-in. It's intuitive and takes less time.</p>
               </div>
               <div className="flex flex-col items-center">
                 <IconPlaceholder />
-                <h3 className="text-xl font-semibold mb-2">2. Instant, Private Analysis</h3>
-                <p className="text-slate-500">Nexis's AI analyzes your facial cues, vocal tone, and text in milliseconds, right on your device.</p>
+                <h3 className="text-xl font-semibold mb-2">2. Get a clear Analysis</h3>
+                <p className="text-slate-500">Nexis's AI analyzes your facial cues, vocal tone, and text in minutes.</p>
               </div>
               <div className="flex flex-col items-center">
                 <IconPlaceholder />
@@ -69,22 +69,22 @@ export default function Home() {
             </div>
           </div>
         </section>
-        
+
         {/* Privacy Promise Section */}
         <section className="py-20 bg-slate-900 text-white">
           <div className="container mx-auto px-6 text-center">
             <h2 className="text-4xl font-bold mb-4">Your Privacy is Our Foundation.</h2>
             <p className="text-5xl font-extrabold text-sky-400 mb-12">
-              Your Data Never Leaves Your Device. Period.
+              Privacy First: Raw Data Deleted, Insights Secured. Period.
             </p>
             <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8 text-left">
               <div className="bg-slate-800 p-6 rounded-lg">
-                <h3 className="font-semibold text-lg mb-2 text-sky-400">On-Device Inference</h3>
-                <p className="text-slate-300">All processing happens securely on your phone. No raw video or audio is ever sent to the cloud.</p>
+                <h3 className="font-semibold text-lg mb-2 text-sky-400">Privacy Through Deletion</h3>
+                <p className="text-slate-300">Your raw video and audio are automatically deleted immediately after processing. We never store your raw recordings.</p>
               </div>
               <div className="bg-slate-800 p-6 rounded-lg">
-                <h3 className="font-semibold text-lg mb-2 text-sky-400">Lightning-Fast & Efficient</h3>
-                <p className="text-slate-300">Optimized models run in under 250ms, ensuring real-time feedback without draining your battery.</p>
+                <h3 className="font-semibold text-lg mb-2 text-sky-400">Insight-Focused Storage</h3>
+                <p className="text-slate-300">We only store the anonymized emotional insights derived from your data, which are used for analysis and improving your experience.</p>
               </div>
               <div className="bg-slate-800 p-6 rounded-lg">
                 <h3 className="font-semibold text-lg mb-2 text-sky-400">Zero Data Footprint</h3>

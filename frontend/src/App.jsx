@@ -4,7 +4,10 @@ import Home from "./pages/Home";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
-import ProtectedRoute from "./components/ProtectedRoutes"; // 1. Import it
+import ProtectedRoute from "./components/ProtectedRoutes"; 
+import MoodTracking from "./pages/MoodTracking";
+import AlertsPage from "./pages/AlertsPage";
+import SettingsPage from "./pages/SettingsPage";
 
 function App() {
   return (
@@ -16,13 +19,13 @@ function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
 
-          {/* 2. Create a Protected Route "group" */}
+          {/* 2. Protected Route "group" */}
           <Route element={<ProtectedRoute />}>
             {/* All routes inside here are now protected */}
             <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/alerts" element={<div>Alerts Page</div>} />
-            <Route path="/mood" element={<div>Mood Page</div>} />
-            {/* You can add more protected routes here */}
+            <Route path="/alerts" element={<AlertsPage/>} />
+            <Route path="/mood" element={<MoodTracking />} />
+            <Route path="/settings" element={<SettingsPage />} />
           </Route>
           
         </Routes>

@@ -61,23 +61,34 @@ export default function PHQ9Survey({ onClose }) {
       return;
     }
     
-    // Send the result to your backend
     try {
-      // *** THIS IS A PLACEHOLDER URL ***
-      // You need to create this endpoint in your FastAPI backend
-      await axios.post(
-        "http://localhost:8000/survey/phq9",
-        {
-          answers: answers,
-          score: score,
-          interpretation: interpretation,
-        }
-        // You'll also need your auth token here
-      );
-    } catch (err) {
-      console.error("Error submitting survey:", err);
+    const token = auth.token;
+
+    if (!token) {
+      console.error("Authentication token not found. Cannot submit survey.");
+      return; 
     }
-  };
+
+    await axios.post(
+      "http://localhost:8000/survey/phq9",
+      { // Data payload
+        answers: answers,
+        score: score,
+        interpretation: interpretation,
+      },
+      { // Configuration object
+        headers: {
+          'Authorization': `Bearer ${token}` 
+        }
+      }
+    );
+
+    console.log("Survey submitted successfully!");
+
+  } catch (err) {
+    console.error("Error submitting survey:", err);
+  }
+};
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">

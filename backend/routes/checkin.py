@@ -7,18 +7,15 @@ import os
 from utils.security import get_current_user 
 
 router = APIRouter(
-    prefix="/check-in",  # This sets the base URL for this file
-    tags=["Check-In"]     # This creates a "Check-In" group in your API docs
+    prefix="/check-in",
+    tags=["Check-In"]    
 )
 
-# --- Define a directory to save the uploads ---
-# We'll save them in a new 'uploads' folder in the backend
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 @router.post("/multimodal")
 async def create_multimodal_checkin(
-    # We use Form(...) for the text and File(...) for the video
     text_input: str = Form(...),
     video_file: UploadFile = File(...),
     db: Session = Depends(get_db),
@@ -32,7 +29,6 @@ async def create_multimodal_checkin(
     3. (Future) Triggers AI analysis.
     """
     
-    # 1. Save the uploaded video file with a unique name
     # We use UUID to prevent files from overwriting each other
     file_extension = video_file.filename.split(".")[-1]
     file_name = f"{uuid.uuid4()}.{file_extension}"
@@ -40,8 +36,6 @@ async def create_multimodal_checkin(
 
     try:
         with open(file_path, "wb") as f:
-            # await video_file.read() reads the entire file into memory
-            # For very large files, you might want to stream this
             f.write(await video_file.read())
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
@@ -60,7 +54,7 @@ async def create_multimodal_checkin(
     #    e. Combine the results into a single assessment
     #    f. Save the assessment to the database, linked to the user
     
-    # 4. For now, just return a success message
+    # 4. Success message
     return {
         "message": "Check-in received successfully!",
         "video_path": file_path,

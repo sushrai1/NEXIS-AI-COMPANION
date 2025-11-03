@@ -1,9 +1,9 @@
 from fastapi import FastAPI
 from db import Base, engine
-from routes import auth, checkin, survey
-import models   # import models so tables are registered
+from routes import auth, checkin, survey, quick_thought, dashboard
+import models   
 from fastapi.middleware.cors import CORSMiddleware
-# Create DB tables
+
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Nexis Backend", version="1.0.0")
@@ -23,6 +23,8 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(checkin.router)
 app.include_router(survey.router)
+app.include_router(quick_thought.router)
+app.include_router(dashboard.router)
 
 @app.get("/")
 def root():

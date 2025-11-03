@@ -1,108 +1,112 @@
-// src/components/MUltimodalCheckIn.jsx
+// src/components/MultimodalCheckIn.jsx
 
 import { useState, useRef, useEffect } from "react";
 import axios from "axios";
 import { useAuth } from "../context/AuthContext";
 
 export default function MultimodalCheckIn({ onClose }) {
-    const { auth } = useAuth();
-    const videoRef = useRef(null);
-    const streamRef = useRef(null); // Use ref for the stream
-    const mediaRecorderRef = useRef(null); // Use ref for the recorder
+  const { auth } = useAuth();
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const recordedChunksRef = useRef([]);
+  const timerIntervalRef = useRef(null); 
 
-    // *** THE FIX IS HERE ***
-    // Use a ref to store the chunks immediately, bypassing React's state lifecycle.
-    const recordedChunksRef = useRef([]);
+  const [isRecording, setIsRecording] = useState(false);
+  const [textInput, setTextInput] = useState("");
+  const [feedback, setFeedback] = useState("Click 'Start Recording' to begin.");
+  const [recordingTime, setRecordingTime] = useState(0); // State for recording time in seconds
 
-    const [isRecording, setIsRecording] = useState(false);
-    const [textInput, setTextInput] = useState("");
-    const [feedback, setFeedback] = useState("Click 'Start Recording' to begin.");
+  // Helper function to format time (e.g., 0:05, 1:23)
+  const formatTime = (timeInSeconds) => {
+    const minutes = Math.floor(timeInSeconds / 60);
+    const seconds = timeInSeconds % 60;
+    return `${minutes}:${seconds < 10 ? "0" : ""}${seconds}`;
+  };
 
-    // Function to start capturing media
-    const startRecording = async () => {
-        try {
-            const mediaStream = await navigator.mediaDevices.getUserMedia({
-                audio: true,
-                video: true,
-            });
-            streamRef.current = mediaStream; // Store stream in ref
+  // Function to start capturing media
+  const startRecording = async () => {
+    try {
+      const mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: true,
+      });
+      streamRef.current = mediaStream;
 
-            // Show stream in video element
-            if (videoRef.current) {
-                videoRef.current.srcObject = mediaStream;
-            }
+      if (videoRef.current) {
+        videoRef.current.srcObject = mediaStream;
+      }
 
-            // Clear any old chunks
-            recordedChunksRef.current = [];
+      recordedChunksRef.current = [];
+      const recorder = new MediaRecorder(mediaStream);
+      mediaRecorderRef.current = recorder;
 
-            // Setup recorder
-            const recorder = new MediaRecorder(mediaStream);
-            mediaRecorderRef.current = recorder; // Store recorder in ref
-
-            // *** THIS IS THE KEY CHANGE ***
-            // Push chunks directly into the ref's array.
-            recorder.ondataavailable = (event) => {
-                if (event.data.size > 0) {
-                    recordedChunksRef.current.push(event.data);
-                    console.log("Data chunk added. Total chunks:", recordedChunksRef.current.length);
-                }
-            };
-
-            // *** THIS IS THE SECOND KEY CHANGE ***
-            // Move the 'onstop' logic here, so it's defined with the recorder.
-            recorder.onstop = async () => {
-                console.log("mediaRecorder.onstop event fired. Preparing blob.");
-
-                // Create a single blob from the chunks in the ref.
-                const videoBlob = new Blob(recordedChunksRef.current, { type: "video/webm" });
-
-                console.log("Blob created. Size:", videoBlob.size, "bytes. Calling sendDataToBackend...");
-
-                // Stop all media tracks
-                if (streamRef.current) {
-                    streamRef.current.getTracks().forEach((track) => track.stop());
-                }
-
-                // Send the data to the backend
-                if (videoBlob.size > 0) {
-                    await sendDataToBackend(videoBlob);
-                } else {
-                    console.error("Blob size is 0. Not sending.");
-                    setFeedback("Recording failed, please try again.");
-                    return; // Stop here
-                }
-
-                // Reset state
-                recordedChunksRef.current = [];
-                streamRef.current = null;
-                mediaRecorderRef.current = null;
-                onClose(); // Close the modal
-            };
-
-            recorder.start();
-            setIsRecording(true);
-            setFeedback("Recording... Click 'Stop' when you're done.");
-        } catch (err) {
-            console.error("Error accessing media devices:", err);
-            setFeedback("Could not access camera/microphone. Please check permissions.");
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          recordedChunksRef.current.push(event.data);
+          console.log("Data chunk added. Total chunks:", recordedChunksRef.current.length);
         }
-    };
+      };
 
-    // Function to stop recording
-    const stopRecording = () => {
-        console.log("stopRecording() called.");
-        if (mediaRecorderRef.current) {
-            // This will automatically trigger the 'onstop' event handler we defined above.
-            mediaRecorderRef.current.stop();
-            setIsRecording(false);
-            setFeedback("Processing your check-in...");
+      recorder.onstop = async () => {
+        console.log("mediaRecorder.onstop event fired. Preparing blob.");
+        // Clear timer interval when recording stops
+        clearInterval(timerIntervalRef.current);
+        setRecordingTime(0);
+
+        const videoBlob = new Blob(recordedChunksRef.current, { type: "video/webm" });
+        console.log("Blob created. Size:", videoBlob.size, "bytes. Calling sendDataToBackend...");
+
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach((track) => track.stop());
+        }
+
+        if (videoBlob.size > 0) {
+          await sendDataToBackend(videoBlob);
         } else {
-            console.error("stopRecording called, but mediaRecorderRef.current is null!");
+          console.error("Blob size is 0. Not sending.");
+          setFeedback("Recording failed, please try again.");
+          return;
         }
-    };
 
-    // Function to send data to your FastAPI backend
-    const sendDataToBackend = async (videoBlob) => {
+        recordedChunksRef.current = [];
+        streamRef.current = null;
+        mediaRecorderRef.current = null;
+        onClose();
+      };
+
+      recorder.start();
+      setIsRecording(true);
+      setFeedback("Recording...");
+      setRecordingTime(0); // Reset timer
+
+      // Start the timer interval
+      timerIntervalRef.current = setInterval(() => {
+        setRecordingTime((prevTime) => prevTime + 1);
+      }, 1000);
+
+    } catch (err) {
+      console.error("Error accessing media devices:", err);
+      setFeedback("Could not access camera/microphone. Please check permissions.");
+    }
+  };
+
+  // Function to stop recording
+  const stopRecording = () => {
+    console.log("stopRecording() called.");
+    if (mediaRecorderRef.current) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      setFeedback("Processing your check-in...");
+      // Timer interval is cleared in the onstop handler
+    } else {
+      console.error("stopRecording called, but mediaRecorderRef.current is null!");
+    }
+  };
+
+  // Function to send data to your FastAPI backend
+  const sendDataToBackend = async (videoBlob) => {
+    // ... (rest of sendDataToBackend remains the same)
         console.log("sendDataToBackend() called. Creating FormData.");
 
         const formData = new FormData();
@@ -121,13 +125,13 @@ export default function MultimodalCheckIn({ onClose }) {
                 formData,
                 {
                     headers: {
-//                      "Content-Type": "multipart/form-data",
                         "Authorization": `Bearer ${auth.token}`
                     },
                 }
             );
 
             console.log("Backend response:", response.data);
+            alert("Video submitted successfully!");
             setFeedback("Check-in complete!");
 
         } catch (err) {
@@ -138,52 +142,64 @@ export default function MultimodalCheckIn({ onClose }) {
                 setFeedback("There was an error processing your check-in.");
             }
         }
-    };
+  };
 
-    return (
-        // ... Your JSX for the modal remains exactly the same ...
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
-            <div className="bg-white p-8 rounded-lg shadow-2xl w-full max-w-2xl">
-                <h2 className="text-2xl font-semibold mb-4">Multimodal Check-In</h2>
-                <p className="text-slate-600 mb-4">{feedback}</p>
-
-                <div className="bg-black rounded-md mb-4">
-                    <video ref={videoRef} autoPlay muted className="w-full h-64 rounded-md" />
-                </div>
-
-                <textarea
-                    className="w-full p-3 border rounded-md mb-4 text-slate-700"
-                    rows="3"
-                    placeholder="How are you feeling today? (Optional)"
-                    value={textInput}
-                    onChange={(e) => setTextInput(e.target.value)}
-                    disabled={isRecording}
-                />
-
-                <div className="flex justify-between items-center">
-                    <button
-                        onClick={onClose}
-                        className="text-slate-500 hover:text-slate-700"
-                    >
-                        Cancel
-                    </button>
-                    {!isRecording ? (
-                        <button
-                            onClick={startRecording}
-                            className="bg-green-500 text-white px-5 py-2 rounded-lg font-semibold"
-                        >
-                            Start Recording
-                        </button>
-                    ) : (
-                        <button
-                            onClick={stopRecording}
-                            className="bg-red-500 text-white px-5 py-2 rounded-lg font-semibold"
-                        >
-                            Stop & Submit
-                        </button>
-                    )}
-                </div>
-            </div>
+  return (
+    // Make the modal background slightly darker for better focus
+    <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+      {/* --- INCREASED MODAL SIZE --- */}
+      {/* Changed max-w-2xl to max-w-4xl */}
+      <div className="bg-white p-8 rounded-lg shadow-2xl w-full max-w-4xl">
+        <h2 className="text-2xl font-semibold mb-4">Multimodal Check-In</h2>
+        <div className="flex justify-between items-center mb-4">
+            <p className="text-slate-600">{feedback}</p>
+            {/* --- DISPLAY TIMER --- */}
+            {isRecording && (
+              <span className="text-red-500 font-mono text-lg">{formatTime(recordingTime)}</span>
+            )}
         </div>
-    );
+
+
+        <div className="bg-black rounded-md mb-4">
+          {/* --- INCREASED VIDEO HEIGHT --- */}
+          {/* Changed h-64 to h-96 */}
+          <video ref={videoRef} autoPlay muted className="w-full h-96 rounded-md" />
+        </div>
+
+        <textarea
+          className="w-full p-3 border rounded-md mb-4 text-slate-700"
+          rows="3"
+          placeholder="How are you feeling today? (Optional)"
+          value={textInput}
+          onChange={(e) => setTextInput(e.target.value)}
+          disabled={isRecording}
+        />
+
+        <div className="flex justify-between items-center">
+          <button
+            onClick={onClose}
+            className="text-slate-500 hover:text-slate-700 px-4 py-2 rounded" // Added padding for easier clicking
+            disabled={isRecording} // Disable cancel while recording
+          >
+            Cancel
+          </button>
+          {!isRecording ? (
+            <button
+              onClick={startRecording}
+              className="bg-green-500 text-white px-5 py-2 rounded-lg font-semibold shadow hover:bg-green-600 transition-colors"
+            >
+              Start Recording
+            </button>
+          ) : (
+            <button
+              onClick={stopRecording}
+              className="bg-red-500 text-white px-5 py-2 rounded-lg font-semibold shadow hover:bg-red-600 transition-colors"
+            >
+              Stop & Submit
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }

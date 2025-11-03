@@ -7,7 +7,7 @@ export default function ProtectedRoute() {
 
   if (!auth.token) {
     // If there's no token, redirect to the login page
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/" replace />;
   }
 
   // If there is a token, show the child component (the Dashboard)

@@ -1,0 +1,17 @@
+  // useEffect(() => {
+  //   // TODO: Fetch mood data from backend based on dateRange
+  //   // const fetchMoodData = async () => {
+  //   //   try {
+  //   //     const response = await api.get(`/mood/history?range_days=${dateRange === 'last7days' ? 7 : 30}`, {
+  //   //        headers: { Authorization: `Bearer ${auth.token}` }
+  //   //      });
+  //   //      // Format data if necessary (e.g., date formatting)
+  //   //      setMoodHistory(response.data);
+  //   //   } catch (error) {
+  //   //      console.error("Error fetching mood history:", error);
+  //   //      setMoodHistory([]); // Clear history on error
+  //   //   }
+  //   // };
+  //   // fetchMoodData();
+  //   setMoodHistory(placeholderMoodHistory); // Use placeholder for now
+  // }, [dateRange]); // Add 'auth.token' if using authentication
