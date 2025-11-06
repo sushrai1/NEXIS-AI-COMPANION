@@ -1,5 +1,6 @@
 #models.py
 from sqlalchemy import Column, Integer, String, Enum, DateTime, func, ForeignKey, JSON, Float, Text
+from datetime import datetime
 from sqlalchemy.orm import relationship
 from db import Base 
 import enum
@@ -49,15 +50,13 @@ class MoodEntry(Base):
     __tablename__ = "mood_entries"
 
     id = Column(Integer, primary_key=True, index=True)
-    mood_label = Column(String, nullable=False, index=True)
-    mood_score = Column(Float, nullable=True)
-    video_path = Column(String, nullable=True) 
-    # Optional detailed scores
-    # facial_expression_details = Column(JSON, nullable=True)
-    # vocal_tone_details = Column(JSON, nullable=True)
-    # text_sentiment_score = Column(Float, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    emotion = Column(String, nullable=False)
+    confidence = Column(Float, nullable=False)
+    probabilities = Column(JSON, nullable=False)
+    video_path = Column(String, nullable=False)
+    text_input = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
     owner = relationship("User", back_populates="mood_entries")
 

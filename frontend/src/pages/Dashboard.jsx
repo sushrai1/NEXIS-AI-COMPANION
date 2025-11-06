@@ -104,7 +104,7 @@ export default function Dashboard() {
         }
       );
 
-      console.log("Quick thought submission response:", response.data);
+//      console.log("Quick thought submission response:", response.data);
       setQuickThought("");
       alert("Thought submitted successfully!");
       setRefreshKey(prevKey => prevKey + 1);
