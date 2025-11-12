@@ -8,6 +8,7 @@ import ProtectedRoute from "./components/ProtectedRoutes";
 import MoodTracking from "./pages/MoodTracking";
 import AlertsPage from "./pages/AlertsPage";
 import SettingsPage from "./pages/SettingsPage";
+import Report from "./pages/Reports";
 
 function App() {
   return (
@@ -24,6 +25,7 @@ function App() {
             {/* All routes inside here are now protected */}
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/alerts" element={<AlertsPage/>} />
+            <Route path="/reports" element={<Report />} />
             <Route path="/mood" element={<MoodTracking />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Route>

@@ -10,6 +10,8 @@ from transformers import (
     AutoTokenizer, AutoModelForSequenceClassification
 )
 
+whisper_model = whisper.load_model("base")
+
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Load models once
@@ -83,6 +85,32 @@ def get_prediction_probabilities(model, processor, input_data, task_type):
 def confidence_based_override(text_probs):
     return text_probs.get("disgust", 0) >= 0.80
 
+def get_text_from_video(video_path):
+    try:
+        temp = "temp_audio.wav"
+
+        # ✅ Windows-safe ffmpeg call (no ellipsis)
+        cmd = [
+            "ffmpeg", "-i", str(video_path),
+            "-vn",
+            "-acodec", "pcm_s16le",
+            "-ar", "16000",
+            "-ac", "1",
+            temp,
+            "-y", "-hide_banner", "-loglevel", "error"
+        ]
+        subprocess.run(cmd, check=True)
+
+        result = whisper_model.transcribe(temp)
+        os.remove(temp)
+
+        return result.get("text", "").strip()
+
+    except Exception as e:
+        print("❌ Whisper transcription failed:", e)
+        traceback.print_exc()
+        return ""
+
 
 def extract_features(video_path, text_input):
     video_path = str(Path(video_path))           # ✅ Normalize safe string path
@@ -148,6 +176,8 @@ def extract_features(video_path, text_input):
 
 
 def predict_emotion(video_path, text_input):
+    if not text_input or text_input.strip() == "":
+        text_input = get_text_from_video(video_path)
     features = extract_features(video_path, text_input)
     probs = model.predict_proba([features])[0]
     pred_index = np.argmax(probs)

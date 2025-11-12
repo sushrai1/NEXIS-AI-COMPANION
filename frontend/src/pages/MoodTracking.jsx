@@ -13,7 +13,7 @@ import {
   Tooltip,
   Legend,
   ArcElement,
-  Filler    
+  Filler
 } from 'chart.js';
 
 ChartJS.register(
@@ -49,12 +49,15 @@ export default function MoodTracking() {
         const entries = data.checkins || [];
 
         const formatted = entries.map(entry => ({
+          id: entry.id,
           date: new Date(entry.timestamp).toISOString().split("T")[0],
-          mood: entry.emotion.charAt(0).toUpperCase() + entry.emotion.slice(1),
-          score: Math.round(entry.confidence / 10),
+          mood: entry.emotion ? entry.emotion.charAt(0).toUpperCase() + entry.emotion.slice(1) : null,
+          score: entry.confidence ? Math.round(entry.confidence / 10) : null,
+          status: entry.status || "uploaded",
         }));
 
         setMoodHistory(formatted);
+
 
       } catch (err) {
         console.error("Failed to fetch mood history:", err);
@@ -66,6 +69,30 @@ export default function MoodTracking() {
 
     fetchMoodHistory();
   }, [dateRange]);
+
+  const handleAnalyze = async (id) => {
+    try {
+      await api.post(`/check-in/analyze/${id}`);
+      // Refresh list
+      const token = localStorage.getItem("token");
+      const res = await api.get('/check-in/history', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = res.data;
+      const entries = data.checkins || [];
+      const formatted = entries.map(entry => ({
+        id: entry.id,
+        date: new Date(entry.timestamp).toISOString().split("T")[0],
+        mood: entry.emotion ? entry.emotion.charAt(0).toUpperCase() + entry.emotion.slice(1) : null,
+        score: entry.confidence ? Math.round(entry.confidence / 10) : null,
+        status: entry.status || "uploaded",
+      }));
+      setMoodHistory(formatted);
+    } catch (err) {
+      console.error("Analyze failed", err);
+      alert("Analysis failed");
+    }
+  };
 
   // --- Chart Configurations ---
   const moodConfig = {
@@ -228,9 +255,47 @@ export default function MoodTracking() {
                       <span className="text-slate-500 text-sm hidden md:inline">
                         (Score: {entry.score})
                       </span>
-                      <button className="text-sm text-sky-600 hover:underline ml-auto sm:ml-0">
-                        View Details
-                      </button>
+                      <div className="ml-auto sm:ml-0 flex items-center gap-3">
+
+                        {/* ✅ Status Badge */}
+                        {entry.status === "analyzed" && (
+                          <span className="px-2 py-1 rounded text-xs font-semibold bg-green-100 text-green-600">
+                            Analyzed
+                          </span>
+                        )}
+
+                        {entry.status === "uploaded" && (
+                          <span className="px-2 py-1 rounded text-xs font-semibold bg-yellow-100 text-yellow-600">
+                            Pending
+                          </span>
+                        )}
+
+                        {entry.status === "failed" && (
+                          <span className="px-2 py-1 rounded text-xs font-semibold bg-red-100 text-red-600">
+                            Failed
+                          </span>
+                        )}
+
+
+                        {/* ✅ Analyze button for pending */}
+                        {entry.status === "uploaded" && (
+                          <button
+                            onClick={() => handleAnalyze(entry.id)}
+                            className="text-sm text-indigo-600 hover:underline"
+                          >
+                            Analyze
+                          </button>
+                        )}
+
+                        {/* ✅ View details only when analyzed */}
+                        {entry.status === "analyzed" && (
+                          <button className="text-sm text-sky-600 hover:underline">
+                            View Details
+                          </button>
+                        )}
+
+                      </div>
+
                     </li>
                   ))
               ) : (

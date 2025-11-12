@@ -24,16 +24,19 @@ export default function Sidebar() {
       { label: "Dashboard", to: "/dashboard", icon: HomeIcon },
       { label: "Mood Tracking", to: "/mood", icon: ChartBarIcon },
       { label: "Alerts", to: "/alerts", icon: BellAlertIcon },
+      {label: "Reports", to: "/reports", icon: ChartBarIcon },
     ],
     guardian: [
       { label: "Dashboard", to: "/guardian", icon: HomeIcon }, 
       { label: "Reports", to: "/reports", icon: ChartBarIcon }, 
       { label: "Alerts", to: "/alerts", icon: BellAlertIcon },
+      {label: "Reports", to: "/reports", icon: ChartBarIcon },
     ],
     doctor: [
       { label: "Dashboard", to: "/doctor", icon: HomeIcon }, 
       { label: "Patients", to: "/patients", icon: UserCircleIcon }, 
-      { label: "Reports", to: "/reports", icon: ChartBarIcon }, 
+      { label: "Reports", to: "/reports", icon: ChartBarIcon },
+      {label: "Reports", to: "/reports", icon: ChartBarIcon }, 
     ],
   };
 

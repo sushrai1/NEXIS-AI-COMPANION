@@ -35,9 +35,8 @@ export default function AlertsPage() {
             newAlerts.push({
               id: entry.id,
               type: "Negative Emotion Detected",
-              description: `Detected '${entry.emotion}' with confidence ${entry.confidence.toFixed(
-                1
-              )}%.`,
+              description: `Detected '${entry.emotion}' with confidence ${entry.confidence != null ? entry.confidence.toFixed(1) : "N/A"
+                }%.`,
               timestamp: entry.timestamp,
               status: "New",
               urgency: emotion === "fearful" || emotion === "angry" ? "High" : "Medium",
@@ -47,17 +46,18 @@ export default function AlertsPage() {
           // ⚠️ Confidence drop compared to previous
           if (index > 0) {
             const prev = checkins[index - 1];
-            if (prev.confidence - entry.confidence >= 20) {
-              newAlerts.push({
-                id: `${entry.id}-drop`,
-                type: "Significant Mood Drop",
-                description: `Confidence dropped from ${prev.confidence.toFixed(
-                  1
-                )}% → ${entry.confidence.toFixed(1)}%.`,
-                timestamp: entry.timestamp,
-                status: "New",
-                urgency: "Medium",
-              });
+            if (prev.confidence != null && entry.confidence != null) {
+              if (prev.confidence - entry.confidence >= 20) {
+                newAlerts.push({
+                  id: `${entry.id}-drop`,
+                  type: "Significant Mood Drop",
+                  description: `Confidence dropped from ${prev.confidence.toFixed(1)
+                    }% → ${entry.confidence.toFixed(1)}%.`,
+                  timestamp: entry.timestamp,
+                  status: "New",
+                  urgency: "Medium",
+                });
+              }
             }
           }
         });

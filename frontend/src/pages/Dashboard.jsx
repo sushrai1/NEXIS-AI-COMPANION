@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 import Layout from "../components/Layout";
 import MultimodalCheckIn from "../components/MultimodalCheckIn";
 import PHQ9Survey from "../components/PHQ9Survey";
+import UploadVideoModal from "./uploadVideo";
 import api from "../api/axios";
 import {
   ArrowTrendingUpIcon,
@@ -19,6 +20,7 @@ export default function Dashboard() {
   const [isCheckInOpen, setIsCheckInOpen] = useState(false);
   const [isSurveyOpen, setIsSurveyOpen] = useState(false);
   const [quickThought, setQuickThought] = useState("");
+  const [isUploadOpen, setIsUploadOpen] = useState(false);
   const { auth } = useAuth();
 
   const [summaryData, setSummaryData] = useState({
@@ -104,7 +106,7 @@ export default function Dashboard() {
         }
       );
 
-//      console.log("Quick thought submission response:", response.data);
+      //      console.log("Quick thought submission response:", response.data);
       setQuickThought("");
       alert("Thought submitted successfully!");
       setRefreshKey(prevKey => prevKey + 1);
@@ -169,31 +171,43 @@ export default function Dashboard() {
               Use video, audio, and text for a deeper analysis of your emotional state.
             </p>
           </div>
-          <button
-            onClick={() => setIsCheckInOpen(true)}
-            className="self-start bg-white text-indigo-600 px-5 py-2 rounded-lg font-semibold text-sm shadow hover:bg-indigo-50 transition-colors"
-          >
-            Start Full Check-In
-          </button>
+
+          {/* ✅ Button Row */}
+          <div className="flex flex-col sm:flex-row gap-3 mt-2">
+            <button
+              onClick={() => setIsCheckInOpen(true)}
+              className="bg-white text-indigo-600 px-5 py-2 rounded-lg font-semibold text-sm shadow hover:bg-indigo-50 transition-colors"
+            >
+              Start Full Check-In
+            </button>
+
+            <button
+              onClick={() => setIsUploadOpen(true)}
+              className="bg-white/90 text-indigo-600 px-5 py-2 rounded-lg font-semibold text-sm shadow hover:bg-white transition-colors"
+            >
+              Upload Video
+            </button>
+          </div>
         </div>
+
 
         {/* Card 2: Alerts & Simple Insight */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 flex flex-col justify-between min-h-[250px]">
           {/* Alerts Section */}
           {summaryData.newAlertsCount > 0 && (
             <div className="bg-amber-50 border border-amber-200 p-3 rounded-lg mb-4 hover:shadow-md transition-shadow duration-200">
-                 <div className="flex items-center justify-between">
-                   <div className="flex items-center">
-                      <BellAlertIcon className="h-5 w-5 text-amber-600 mr-2 flex-shrink-0"/>
-                      <p className="font-semibold text-amber-800 text-sm">
-                        {summaryData.newAlertsCount} New Alert{summaryData.newAlertsCount > 1 ? 's' : ''}
-                      </p>
-                   </div>
-                   <Link to="/alerts" className="text-xs text-amber-700 hover:underline font-medium ml-2 flex-shrink-0">
-                     View
-                   </Link>
-                 </div>
-               </div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center">
+                  <BellAlertIcon className="h-5 w-5 text-amber-600 mr-2 flex-shrink-0" />
+                  <p className="font-semibold text-amber-800 text-sm">
+                    {summaryData.newAlertsCount} New Alert{summaryData.newAlertsCount > 1 ? 's' : ''}
+                  </p>
+                </div>
+                <Link to="/alerts" className="text-xs text-amber-700 hover:underline font-medium ml-2 flex-shrink-0">
+                  View
+                </Link>
+              </div>
+            </div>
           )}
 
           {/* Simple Insight Area */}
@@ -267,6 +281,12 @@ export default function Dashboard() {
       {isSurveyOpen && (
         <PHQ9Survey onClose={() => setIsSurveyOpen(false)} />
       )}
+
+      {isUploadOpen && (
+  <UploadVideoModal onClose={() => setIsUploadOpen(false)} />
+)}
+
+
     </Layout>
 
   );

@@ -5,6 +5,11 @@ from sqlalchemy.orm import relationship
 from db import Base 
 import enum
 
+class EntryStatus(enum.Enum):
+    uploaded = "uploaded"     
+    analyzed = "analyzed"     
+    failed = "failed"         
+
 class UserRole(str, enum.Enum):
     user = "user"
     guardian = "guardian"
@@ -59,6 +64,8 @@ class MoodEntry(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     owner = relationship("User", back_populates="mood_entries")
+    status = Column(Enum(EntryStatus), default=EntryStatus.uploaded)
+    analysis_error = Column(String, nullable=True)
 
 class QuickThought(Base):
     __tablename__ = "quick_thoughts"

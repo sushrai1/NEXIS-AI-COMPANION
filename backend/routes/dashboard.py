@@ -3,12 +3,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from typing import Optional, List
 from datetime import datetime, timedelta
-
+from utils.aggregation import aggregate_last_14_days
 from db import get_db
 import models
 from schemas import QuickThoughtResponse
 from utils.security import get_current_user
 from pydantic import BaseModel
+from utils.llm import summarize_mental_health
 
 router = APIRouter(
     prefix="/dashboard",
@@ -88,13 +89,22 @@ def get_dashboard_summary(
         .all()
     )
 
-    if checkins:
-        current_mood = checkins[0].emotion.capitalize()
-        recent_emotions = [c.emotion for c in reversed(checkins)]
-        trend_text = get_emotion_trend(recent_emotions)
+    first = checkins[0]
+
+    if first.emotion:
+        current_mood = first.emotion.capitalize()
+    elif first.status == models.EntryStatus.uploaded:
+        current_mood = "Pending Analysis"
+    elif first.status == models.EntryStatus.failed:
+        current_mood = "Analysis Failed"
     else:
         current_mood = None
-        trend_text = "No data yet"
+
+    recent_emotions = [c.emotion for c in reversed(checkins) if c.emotion]
+    if recent_emotions:
+        trend_text = get_emotion_trend(recent_emotions)
+    else:
+        trend_text = "No analyzed check-ins"
 
     # 3️⃣ Count alerts = number of negative emotions in last 7 days
     seven_days_ago = datetime.utcnow() - timedelta(days=7)
@@ -114,3 +124,57 @@ def get_dashboard_summary(
         mood_trend_text=trend_text,
         new_alerts_count=alerts_count
     )
+
+@router.get("/weekly-report")
+def get_weekly_report(
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    summary_14 = aggregate_last_14_days(db, current_user.id)
+    if not summary_14:
+        return {"message": "Not enough analyzed data", "summary_14": {}}
+
+    # --- Pull latest PHQ-9 in last 14 days (if any) ---
+    since = datetime.utcnow() - timedelta(days=14)
+    latest_phq = (
+        db.query(models.SurveyResult)
+        .filter(models.SurveyResult.owner_id == current_user.id)
+        .filter(models.SurveyResult.created_at >= since)
+        .order_by(models.SurveyResult.created_at.desc())
+        .first()
+    )
+
+    # Normalize PHQ-9 to 0..100 (0..27 → 0..100)
+    phq_norm = None
+    if latest_phq and latest_phq.score is not None:
+        phq_norm = round((latest_phq.score / 27.0) * 100.0, 2)
+
+    # --- Risk score blending ---
+    # Base: daily average + negative-day ratio
+    base_risk = 0.6 * summary_14["avg_score"] + 0.4 * (summary_14["neg_ratio"] * 100.0)
+
+    # If PHQ present, blend it in (tilt towards clinical anchor)
+    if phq_norm is not None:
+        risk = 0.5 * summary_14["avg_score"] + 0.3 * (summary_14["neg_ratio"] * 100.0) + 0.2 * phq_norm
+    else:
+        risk = base_risk
+
+    report = {
+        "user": current_user.email,
+        "risk_score": round(risk, 2),
+        "summary_14": summary_14,
+        "phq_9": {
+            "score": latest_phq.score if latest_phq else None,
+            "normalized": phq_norm,
+            "timestamp": latest_phq.created_at.isoformat() if latest_phq else None,
+        },
+    }
+
+    # Optional LLM narrative
+    try:
+        from utils.llm import summarize_mental_health
+        report["narrative"] = summarize_mental_health(report)
+    except Exception:
+        report["narrative"] = None
+
+    return report
