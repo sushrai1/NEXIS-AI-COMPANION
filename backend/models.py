@@ -1,5 +1,5 @@
 #models.py
-from sqlalchemy import Column, Integer, String, Enum, DateTime, func, ForeignKey, JSON, Float, Text
+from sqlalchemy import Column, Integer, String, Enum, DateTime, func, ForeignKey, JSON, Float, Text, Index
 from datetime import datetime
 from sqlalchemy.orm import relationship
 from db import Base 
@@ -90,3 +90,21 @@ class Alert(Base):
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
 
     owner = relationship("User", back_populates="alerts")
+
+class WeeklyReport(Base):
+    __tablename__ = "weekly_reports"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+
+    period_start = Column(DateTime(timezone=True), nullable=False)
+    period_end   = Column(DateTime(timezone=True), nullable=False)
+
+    payload = Column(JSON, nullable=False)  
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    owner = relationship("User")
+
+    __table_args__ = (
+        Index("ix_weekly_reports_user_period", "user_id", "period_start", "period_end"),
+    )
