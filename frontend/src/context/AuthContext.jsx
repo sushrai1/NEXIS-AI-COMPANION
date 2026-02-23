@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect } from "react";
-import api from "../api/axios"; 
+import api from "../api/axios";
 
 const AuthContext = createContext();
 
@@ -9,7 +9,12 @@ export function AuthProvider({ children }) {
     token: localStorage.getItem("token") || null,
   });
 
-  // This useEffect sets the auth header for all REQUESTS
+  // Track whether we've finished the initial rehydration check.
+  // While this is true we don't render children, so ProtectedRoute never
+  // tries to evaluate stale state.
+  const [isRehydrating, setIsRehydrating] = useState(!!localStorage.getItem("token"));
+
+  // --- Sync token to localStorage and axios default header ---
   useEffect(() => {
     if (auth.token) {
       localStorage.setItem("token", auth.token);
@@ -20,30 +25,43 @@ export function AuthProvider({ children }) {
     }
   }, [auth.token]);
 
-  // --- NEW CODE: RESPONSE INTERCEPTOR ---
-  // This useEffect will watch for all RESPONSES
+  // --- On mount: if a token already exists, restore the user object ---
   useEffect(() => {
-    const responseInterceptor = api.interceptors.response.use(
-      (response) => response, // If response is good (2xx), just return it
+    const storedToken = localStorage.getItem("token");
+    if (!storedToken) return; // no token → nothing to do
+
+    // Set the header before the request so /auth/me is authenticated
+    api.defaults.headers.common["Authorization"] = `Bearer ${storedToken}`;
+
+    api
+      .get("/auth/me")
+      .then((res) => {
+        setAuth({ token: storedToken, user: res.data });
+      })
+      .catch(() => {
+        // Token is expired / invalid — clear everything
+        localStorage.removeItem("token");
+        setAuth({ token: null, user: null });
+      })
+      .finally(() => {
+        setIsRehydrating(false);
+      });
+  }, []); // run exactly once on mount
+
+  // --- Global 401 interceptor ---
+  useEffect(() => {
+    const id = api.interceptors.response.use(
+      (res) => res,
       (error) => {
-        // If the response is an error
-        if (error.response && error.response.status === 401) {
-          // Token is bad (expired or invalid)
-          console.log("AuthContext: Received 401. Logging out.");
-          logout(); // Call the logout function to clear state
+        if (error.response?.status === 401) {
+          logout();
         }
-        // Always return the error so the component can handle it
         return Promise.reject(error);
       }
     );
+    return () => api.interceptors.response.eject(id);
+  }, []);
 
-    // Cleanup function: remove the interceptor when the component unmounts
-    return () => {
-      api.interceptors.response.eject(responseInterceptor);
-    };
-  }, []); // Empty dependency array means this runs once on mount
-
-  // Login
   const login = async (email, password) => {
     const res = await api.post("/auth/login", { email, password });
     setAuth({
@@ -52,22 +70,32 @@ export function AuthProvider({ children }) {
     });
   };
 
-  // Register
   const register = async (name, email, password, role) => {
     const res = await api.post("/auth/register", { name, email, password, role });
     return res.data;
   };
 
-  // Logout
   const logout = () => {
-    setAuth({
-      token: null,
-      user: null,
-    });
+    setAuth({ token: null, user: null });
   };
 
+  // Partial-update the user object in state (e.g. after a name change)
+  const updateUser = (patch) => {
+    setAuth((prev) => ({ ...prev, user: { ...prev.user, ...patch } }));
+  };
+
+  // Don't render anything until we know whether the stored token is valid.
+  // This prevents a flash where ProtectedRoute redirects to "/" on reload.
+  if (isRehydrating) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-50">
+        <div className="text-slate-400 text-sm animate-pulse">Loading…</div>
+      </div>
+    );
+  }
+
   return (
-    <AuthContext.Provider value={{ auth, login, register, logout }}>
+    <AuthContext.Provider value={{ auth, login, register, logout, updateUser }}>
       {children}
     </AuthContext.Provider>
   );

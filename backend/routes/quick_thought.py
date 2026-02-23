@@ -31,9 +31,7 @@ def submit_quick_thought(
     try:
          vs = analyzer.polarity_scores(thought_data.text_content)
          sentiment = vs['compound'] 
-         print(f"Sentiment for '{thought_data.text_content[:30]}...': {sentiment}")
-    except Exception as e:
-         print(f"Sentiment analysis failed: {e}") 
+    except Exception:
          sentiment = None
     
     # --- Save to database ---
@@ -46,6 +44,5 @@ def submit_quick_thought(
     db.commit()
     db.refresh(db_thought) 
     
-    print(f"Saved quick thought for user: {current_user.email}")
     
     return db_thought

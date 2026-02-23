@@ -1,132 +1,247 @@
+// src/pages/Reports.jsx
 import { useEffect, useState } from "react";
-import api from "../api/axios";
+import api from "../api/axios.jsx";
 import Layout from "../components/Layout";
+import {
+    LightBulbIcon,
+    SparklesIcon,
+    BoltIcon,
+    ExclamationTriangleIcon,
+    ArrowPathIcon,
+    ChartBarIcon,
+} from "@heroicons/react/24/outline";
+
+// Gauge / risk bar for visual risk score display
+function RiskBar({ score }) {
+    const pct = Math.min(100, Math.max(0, score ?? 0));
+    const color =
+        pct < 33 ? "bg-green-500" : pct < 66 ? "bg-amber-500" : "bg-red-500";
+    const label =
+        pct < 33 ? "Low Risk" : pct < 66 ? "Moderate Risk" : "High Risk";
+    const textColor =
+        pct < 33 ? "text-green-600" : pct < 66 ? "text-amber-600" : "text-red-600";
+
+    return (
+        <div>
+            <div className="flex justify-between items-baseline mb-1">
+                <span className={`text-2xl font-bold ${textColor}`}>{score ?? "—"}</span>
+                <span className={`text-xs font-semibold uppercase tracking-wider ${textColor}`}>{label}</span>
+            </div>
+            <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden">
+                <div
+                    className={`h-full rounded-full transition-all duration-700 ${color}`}
+                    style={{ width: `${pct}%` }}
+                />
+            </div>
+            <div className="flex justify-between text-[10px] text-slate-400 mt-1">
+                <span>0</span><span>33</span><span>66</span><span>100</span>
+            </div>
+        </div>
+    );
+}
+
+function MetricRow({ label, value, hint }) {
+    return (
+        <div className="flex justify-between items-center py-2 border-b border-slate-100 last:border-0">
+            <div>
+                <span className="text-sm text-slate-700">{label}</span>
+                {hint && <p className="text-[10px] text-slate-400 mt-0.5">{hint}</p>}
+            </div>
+            <span className="font-semibold text-slate-800 text-sm ml-4 flex-shrink-0">{value ?? "—"}</span>
+        </div>
+    );
+}
+
+function Section({ title, icon: Icon, iconColor = "text-indigo-500", children }) {
+    return (
+        <div className="space-y-3">
+            <h3 className={`flex items-center gap-2 text-sm font-semibold uppercase tracking-wider ${iconColor}`}>
+                <Icon className="h-4 w-4" />
+                {title}
+            </h3>
+            {children}
+        </div>
+    );
+}
+
+function SuggestionChip({ label }) {
+    return (
+        <span className="inline-flex items-center px-3 py-1.5 text-xs rounded-full border bg-white text-indigo-700 border-indigo-200 shadow-sm font-medium">
+            {label}
+        </span>
+    );
+}
+
+function LoadingSkeleton() {
+    return (
+        <Layout>
+            <div className="animate-pulse space-y-6">
+                <div className="h-7 bg-slate-200 rounded w-1/4" />
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div className="space-y-4 lg:col-span-1">
+                        <div className="bg-white rounded-xl p-5 shadow space-y-3">
+                            <div className="h-4 bg-slate-200 rounded w-1/2" />
+                            {[...Array(5)].map((_, i) => (
+                                <div key={i} className="flex justify-between">
+                                    <div className="h-3 bg-slate-100 rounded w-2/5" />
+                                    <div className="h-3 bg-slate-200 rounded w-1/5" />
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                    <div className="bg-white rounded-xl p-6 shadow lg:col-span-2 space-y-4">
+                        {[...Array(4)].map((_, i) => (
+                            <div key={i} className="h-4 bg-slate-100 rounded w-full" />
+                        ))}
+                    </div>
+                </div>
+            </div>
+        </Layout>
+    );
+}
 
 export default function Report() {
     const [report, setReport] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(false);
 
     const fetchReport = async () => {
         setLoading(true);
+        setError(false);
         try {
             const res = await api.get("/dashboard/weekly-report");
             setReport(res.data);
         } catch (err) {
             console.error("Failed to load report:", err);
+            setError(true);
+        } finally {
+            setLoading(false);
         }
-        setLoading(false);
     };
 
-    useEffect(() => {
-        fetchReport();
-    }, []);
+    useEffect(() => { fetchReport(); }, []);
 
-    if (loading)
+    if (loading) return <LoadingSkeleton />;
+
+    if (error || !report) {
         return (
             <Layout>
-                <div className="flex justify-center items-center min-h-[200px] text-gray-600">
-                    Loading weekly report...
+                <div className="flex flex-col items-center justify-center min-h-[300px] gap-4">
+                    <ExclamationTriangleIcon className="h-12 w-12 text-slate-300" />
+                    <p className="text-slate-500 font-medium">Could not load your report.</p>
+                    <button
+                        onClick={fetchReport}
+                        className="flex items-center gap-2 bg-sky-500 text-white px-5 py-2 rounded-lg text-sm font-semibold hover:bg-sky-600 transition-colors"
+                    >
+                        <ArrowPathIcon className="h-4 w-4" /> Try Again
+                    </button>
                 </div>
             </Layout>
         );
-
-    if (!report) return <p>No report found.</p>;
+    }
 
     const s = report.summary_14 || {};
 
     return (
         <Layout>
             <div className="space-y-6">
-                <h1 className="text-2xl font-bold text-gray-800 mb-2">
-                    Weekly Report
-                </h1>
+                <div className="flex items-center justify-between">
+                    <div>
+                        <h1 className="text-3xl font-bold text-slate-800">Weekly Report</h1>
+                        <p className="text-slate-500 text-sm mt-0.5">Based on your last 14 days of check-ins.</p>
+                    </div>
+                    <button
+                        onClick={fetchReport}
+                        className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-sky-600 transition-colors"
+                    >
+                        <ArrowPathIcon className="h-4 w-4" /> Refresh
+                    </button>
+                </div>
 
-                {/* GRID LAYOUT */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-                    {/* LEFT COLUMN */}
-                    <div className="space-y-6 lg:col-span-1">
+                    {/* Left column */}
+                    <div className="space-y-5 lg:col-span-1">
 
-                        {/* --- 14-Day Summary --- */}
-                        <div className="p-4 bg-white rounded-xl shadow space-y-2">
-                            <h2 className="text-lg font-semibold">14-Day Summary</h2>
-
-                            <Metric label="Entries" value={s.num_entries} />
-                            <Metric label="Average Score" value={s.avg_score} />
-                            <Metric label="Standard Deviation" value={s.std_dev} />
-                            <Metric label="Best Day (lower=better)" value={s.best} />
-                            <Metric label="Worst Day (higher=worse)" value={s.worst} />
-                            <Metric label="Negative Ratio" value={s.neg_ratio} />
-                            <Metric label="Trend Slope" value={s.trend_slope} />
+                        {/* Risk Score */}
+                        <div className="p-5 bg-white rounded-xl shadow-sm border border-slate-100 space-y-4">
+                            <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-500 uppercase tracking-wider">
+                                <ChartBarIcon className="h-4 w-4 text-slate-400" />
+                                Emotional Risk Score
+                            </h2>
+                            <RiskBar score={report.risk_score} />
+                            <p className="text-xs text-slate-400 leading-relaxed">
+                                Estimates your emotional risk over the last 2 weeks. Not a diagnosis — just an indicator.
+                            </p>
                         </div>
 
-                        {/* --- Risk Score --- */}
-                        <div className="p-4 bg-white rounded-xl shadow space-y-3">
-                            <h2 className="text-lg font-semibold">Risk Score</h2>
-
-                            <p
-                                className={`text-3xl font-bold
-                ${report.risk_score < 33
-                                        ? "text-green-600"
-                                        : report.risk_score < 66
-                                            ? "text-yellow-500"
-                                            : "text-red-600"
-                                    }
-              `}
-                            >
-                                {report.risk_score}
-                            </p>
-
-                            <p className="text-sm text-gray-600 leading-relaxed">
-                                This represents your emotional risk estimate over the last
-                                2 weeks. Higher values generally indicate more distress or
-                                instability. Not a diagnosis — just insight.
-                            </p>
-
-                            {/* Legend */}
-                            <div className="mt-3 space-y-1 text-sm">
-                                <h3 className="font-medium text-gray-700">Legend</h3>
-
-                                <Legend color="bg-green-600" label="< 33 — Low" />
-                                <Legend color="bg-yellow-500" label="33 → 66 — Moderate" />
-                                <Legend color="bg-red-600" label="> 66 — High" />
-                            </div>
+                        {/* 14-Day Stats */}
+                        <div className="p-5 bg-white rounded-xl shadow-sm border border-slate-100">
+                            <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-500 uppercase tracking-wider mb-3">
+                                <ChartBarIcon className="h-4 w-4 text-slate-400" />
+                                14-Day Stats
+                            </h2>
+                            <MetricRow label="Total Check-ins" value={s.num_entries} />
+                            <MetricRow label="Average Mood Score" value={s.avg_score} hint="Out of 100" />
+                            <MetricRow label="Score Variability" value={s.std_dev} hint="Lower = more stable" />
+                            <MetricRow label="Best Score" value={s.best} />
+                            <MetricRow label="Lowest Score" value={s.worst} />
+                            <MetricRow label="Negative Mood Rate" value={s.neg_ratio != null ? `${(s.neg_ratio * 100).toFixed(0)}%` : null} />
+                            <MetricRow label="Trend Direction" value={s.trend_slope != null ? (s.trend_slope > 0 ? "↑ Improving" : "↓ Declining") : null} />
                         </div>
                     </div>
 
-                    {/* RIGHT COLUMN — Nexis multi-section card*/}
-                    <div className="p-6 rounded-xl shadow bg-white border flex flex-col space-y-6 lg:col-span-2">
-
-                        {/* Header */}
-                        <div className="flex items-center space-x-3">
-                            <div className="w-12 h-12 rounded-full bg-indigo-600 flex items-center justify-center text-white text-xl">
+                    {/* Right column — AI Report */}
+                    <div className="p-6 rounded-xl shadow-sm bg-white border border-slate-100 flex flex-col gap-6 lg:col-span-2">
+                        {/* Nexis header */}
+                        <div className="flex items-center gap-3 pb-4 border-b border-slate-100">
+                            <div className="w-11 h-11 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-lg shadow">
                                 🤖
                             </div>
                             <div>
-                                <h2 className="font-semibold text-gray-800 text-lg">Nexis</h2>
-                                <p className="text-xs text-gray-500">Your AI emotional companion</p>
+                                <p className="font-semibold text-slate-800">Nexis AI</p>
+                                <p className="text-xs text-slate-400">Your emotional companion</p>
                             </div>
                         </div>
 
-                        {/* Summary (2–3 sentences) */}
-                        <Section title="Summary">
-                            <p className="whitespace-pre-wrap text-gray-700">
-                                {report.summary || "Not enough data to generate a summary."}
+                        {/* Summary */}
+                        <Section title="Summary" icon={SparklesIcon} iconColor="text-violet-500">
+                            <p className="text-slate-700 text-sm leading-relaxed whitespace-pre-wrap">
+                                {report.summary || "Not enough data to generate a summary yet. Keep checking in!"}
                             </p>
                         </Section>
 
                         {/* Key Insights */}
-                        {!!(report.key_insights?.length) && (
-                            <Section title="Key Insights">
-                                <ul className="list-disc pl-5 space-y-1 text-gray-700">
-                                    {report.key_insights.map((i, idx) => <li key={idx}>{i}</li>)}
+                        {!!report.key_insights?.length && (
+                            <Section title="Key Insights" icon={LightBulbIcon} iconColor="text-amber-500">
+                                <ul className="space-y-2">
+                                    {report.key_insights.map((insight, idx) => (
+                                        <li key={idx} className="flex items-start gap-2 text-sm text-slate-700">
+                                            <span className="mt-1 w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />
+                                            {insight}
+                                        </li>
+                                    ))}
                                 </ul>
                             </Section>
                         )}
 
-                        {/* Suggestions (dynamic chips) */}
-                        {!!(report.suggestions?.length) && (
-                            <Section title="Suggestions">
+                        {/* Strengths */}
+                        {!!report.strengths?.length && (
+                            <Section title="Your Strengths" icon={BoltIcon} iconColor="text-emerald-500">
+                                <ul className="space-y-2">
+                                    {report.strengths.map((s, idx) => (
+                                        <li key={idx} className="flex items-start gap-2 text-sm text-slate-700">
+                                            <span className="mt-1 w-1.5 h-1.5 rounded-full bg-emerald-400 flex-shrink-0" />
+                                            {s}
+                                        </li>
+                                    ))}
+                                </ul>
+                            </Section>
+                        )}
+
+                        {/* Suggestions */}
+                        {!!report.suggestions?.length && (
+                            <Section title="Suggestions" icon={SparklesIcon} iconColor="text-sky-500">
                                 <div className="flex flex-wrap gap-2">
                                     {report.suggestions.map((s, idx) => (
                                         <SuggestionChip key={idx} label={s} />
@@ -135,75 +250,32 @@ export default function Report() {
                             </Section>
                         )}
 
-                        {/* Strengths */}
-                        {!!(report.strengths?.length) && (
-                            <Section title="Strengths">
-                                <ul className="list-disc pl-5 space-y-1 text-gray-700">
-                                    {report.strengths.map((s, idx) => <li key={idx}>{s}</li>)}
-                                </ul>
-                            </Section>
-                        )}
-
                         {/* Possible Triggers */}
-                        {!!(report.possible_triggers?.length) && (
-                            <Section title="Possible Triggers">
-                                <ul className="list-disc pl-5 space-y-1 text-gray-700">
-                                    {report.possible_triggers.map((t, idx) => <li key={idx}>{t}</li>)}
+                        {!!report.possible_triggers?.length && (
+                            <Section title="Possible Triggers" icon={ExclamationTriangleIcon} iconColor="text-red-400">
+                                <ul className="space-y-2">
+                                    {report.possible_triggers.map((t, idx) => (
+                                        <li key={idx} className="flex items-start gap-2 text-sm text-slate-700">
+                                            <span className="mt-1 w-1.5 h-1.5 rounded-full bg-red-400 flex-shrink-0" />
+                                            {t}
+                                        </li>
+                                    ))}
                                 </ul>
                             </Section>
                         )}
 
-                        {/* Follow-up Recommendation */}
+                        {/* Follow-up banner */}
                         {report.recommend_followup && (
-                            <div className="rounded-lg border border-amber-300 bg-amber-50 p-4">
+                            <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                                <ExclamationTriangleIcon className="h-5 w-5 text-amber-500 flex-shrink-0 mt-0.5" />
                                 <p className="text-sm text-amber-800">
-                                    If tough feelings continue, consider talking to someone you trust or a mental health professional.
+                                    If tough feelings persist, consider talking to someone you trust or a mental health professional.
                                 </p>
                             </div>
                         )}
                     </div>
-
                 </div>
             </div>
         </Layout>
     );
 }
-
-/* Reusable metric line */
-function Metric({ label, value }) {
-    return (
-        <div className="flex justify-between border-b pb-2">
-            <span className="text-gray-700">{label}</span>
-            <span className="font-semibold">{value ?? "-"}</span>
-        </div>
-    );
-}
-
-/* Legend unit */
-function Legend({ color, label }) {
-    return (
-        <div className="flex items-center space-x-2">
-            <span className={`inline-block w-3 h-3 rounded-full ${color}`} />
-            <span className="text-gray-700">{label}</span>
-        </div>
-    );
-}
-
-function Section({ title, children }) {
-  return (
-    <div className="space-y-2">
-      <h3 className="text-sm font-semibold text-gray-800">{title}</h3>
-      {children}
-    </div>
-  );
-}
-
-function SuggestionChip({ label }) {
-  return (
-    <span className="px-3 py-1 text-xs rounded-full border bg-white text-indigo-600 border-indigo-300 shadow-sm">
-      {label}
-    </span>
-  );
-}
-
-

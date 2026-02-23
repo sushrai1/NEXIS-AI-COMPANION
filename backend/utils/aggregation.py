@@ -49,7 +49,6 @@ def aggregate_last_14_days(db: Session, user_id: int):
     negative_day_flags = 0
 
     for e in analyzed:
-        # --- compute score (your existing function) ---
         score = compute_daily_score(e)
         if score is None:
             continue
@@ -67,10 +66,8 @@ def aggregate_last_14_days(db: Session, user_id: int):
     if not scores:
         return None
 
-    # NOTE: lower score == better (per your UI text), so:
-    best = float(np.min(scores))   # lower = better
-    worst = float(np.max(scores))  # higher = worse
-
+    best = float(np.min(scores))   
+    worst = float(np.max(scores))  
     avg_score = float(np.mean(scores))
     std_dev   = float(np.std(scores))
 

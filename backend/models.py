@@ -56,11 +56,11 @@ class MoodEntry(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    emotion = Column(String, nullable=False)
-    confidence = Column(Float, nullable=False)
-    probabilities = Column(JSON, nullable=False)
-    video_path = Column(String, nullable=False)
-    text_input = Column(String, nullable=False)
+    emotion = Column(String, nullable=True)          # null until analyzed
+    confidence = Column(Float, nullable=True)         # null until analyzed
+    probabilities = Column(JSON, nullable=True)       # null until analyzed
+    video_path = Column(String, nullable=True)        # null for text-only entries
+    text_input = Column(String, nullable=True)        # optional
     created_at = Column(DateTime, default=datetime.utcnow)
 
     owner = relationship("User", back_populates="mood_entries")
@@ -88,6 +88,8 @@ class Alert(Base):
     urgency = Column(Enum(AlertUrgency), nullable=False, default=AlertUrgency.medium)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # Link to the mood entry that triggered this alert (nullable for manually-created alerts)
+    mood_entry_id = Column(Integer, ForeignKey("mood_entries.id"), nullable=True, unique=True)
 
     owner = relationship("User", back_populates="alerts")
 

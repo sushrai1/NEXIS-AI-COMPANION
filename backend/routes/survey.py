@@ -23,9 +23,6 @@ def submit_phq9_survey(
     Receives and saves a user's PHQ-9 survey results.
     """
     
-    print(f"Received PHQ-9 survey from user: {current_user.email}")
-    print(f"Score: {survey_data.score}")
-    
     # --- Save to database ---
     db_result = models.SurveyResult(
         owner_id=current_user.id, 
