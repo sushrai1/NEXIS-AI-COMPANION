@@ -1,9 +1,9 @@
-from fastapi import APIRouter, Depends, File, Form, UploadFile, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile, HTTPException, status as http_status
 from sqlalchemy.orm import Session
-from db import get_db  
+from db import get_db, SessionLocal
 import models, uuid, os
-from utils.security import get_current_user 
-from utils.predict_emotion import predict_emotion  
+from utils.security import get_current_user
+from utils.predict_emotion import predict_emotion
 import traceback
 
 router = APIRouter(prefix="/check-in", tags=["Check-In"])
@@ -12,15 +12,78 @@ UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
-@router.post("/multimodal")
+def _run_analysis_in_background(entry_id: int, file_path: str, text_input: str):
+    """
+    Runs emotion analysis in a background thread with its own DB session.
+    Called via FastAPI BackgroundTasks so it never blocks the event loop.
+    """
+    NEGATIVE_EMOTIONS = {"sad", "angry", "fearful", "disgust"}
+
+    db: Session = SessionLocal()
+    try:
+        entry = db.query(models.MoodEntry).filter(models.MoodEntry.id == entry_id).first()
+        if not entry:
+            return
+
+        result = predict_emotion(file_path, text_input)
+        emotion = result["predicted_emotion"]
+
+        entry.emotion = emotion
+        entry.confidence = result["confidence"]
+        entry.probabilities = result["probabilities"]
+        entry.status = models.EntryStatus.analyzed
+        entry.analysis_error = None
+        db.commit()
+
+        # Auto-create an Alert row for negative emotions so AlertsPage
+        # can persist and acknowledge them properly.
+        if emotion and emotion.lower() in NEGATIVE_EMOTIONS:
+            urgency = (
+                models.AlertUrgency.high
+                if emotion.lower() in {"fearful", "angry"}
+                else models.AlertUrgency.medium
+            )
+            alert = models.Alert(
+                owner_id=entry.user_id,
+                mood_entry_id=entry.id,
+                alert_type="Negative Emotion Detected",
+                description=(
+                    f"Detected \"{emotion.capitalize()}\" with "
+                    f"{result['confidence']:.1f}% confidence during your check-in."
+                ),
+                status=models.AlertStatus.new,
+                urgency=urgency,
+            )
+            db.add(alert)
+            db.commit()
+
+    except Exception as e:
+        traceback.print_exc()
+        try:
+            entry = db.query(models.MoodEntry).filter(models.MoodEntry.id == entry_id).first()
+            if entry:
+                entry.status = models.EntryStatus.failed
+                entry.analysis_error = str(e)
+                db.commit()
+        except Exception:
+            pass
+    finally:
+        db.close()
+
+
+@router.post("/multimodal", status_code=202)
 async def create_multimodal_checkin(
+    background_tasks: BackgroundTasks,
     text_input: str = Form(...),
     video_file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(get_current_user),
 ):
-    print("--- CHECK-IN FUNCTION STARTED ---")
-
+    """
+    Saves the video and returns 202 immediately.
+    Emotion analysis runs as a background task so the event loop
+    is never blocked and other pages continue to load normally.
+    """
     file_extension = video_file.filename.split(".")[-1]
     file_name = f"{uuid.uuid4()}.{file_extension}"
     file_path = os.path.join(UPLOAD_DIR, file_name)
@@ -31,39 +94,24 @@ async def create_multimodal_checkin(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
 
-    print(f"Video saved to {file_path} for user {current_user.email}")
-
-    try:
-        analysis_result = predict_emotion(file_path, text_input)
-    except Exception as e:
-        print("❌ Emotion analysis crashed:")
-        traceback.print_exc()                  # ✅ PRINT REAL ERROR
-        raise HTTPException(status_code=500, detail=f"Emotion analysis failed: {str(e)}")
-
+    # Create the entry immediately with status=uploaded so the user
+    # can see it in Mood Tracking right away (as Pending → Analyzing → Analyzed)
     checkin = models.MoodEntry(
         user_id=current_user.id,
-        emotion=analysis_result["predicted_emotion"],
-        confidence=analysis_result["confidence"],
-        probabilities=analysis_result["probabilities"],
         video_path=file_path,
         text_input=text_input,
+        status=models.EntryStatus.uploaded,
     )
     db.add(checkin)
     db.commit()
     db.refresh(checkin)
 
+    # Schedule analysis to run after the response is sent
+    background_tasks.add_task(_run_analysis_in_background, checkin.id, file_path, text_input)
+
     return {
-        "message": "✅ Check-in analyzed and stored successfully!",
-        "data": {
-            "id": checkin.id,
-            "timestamp": checkin.created_at.isoformat(),
-            "emotion": checkin.emotion,
-            "confidence": checkin.confidence,
-            "probabilities": checkin.probabilities,
-            "video_path": checkin.video_path,
-            "text_input": checkin.text_input,
-            "user_email": current_user.email
-        }
+        "message": "Check-in received. Analysis is running in the background.",
+        "id": checkin.id,
     }
 
 
@@ -112,7 +160,6 @@ async def upload_video_only(
     Uploads a video and stores it as a MoodEntry WITHOUT analysis.
     Useful for batch upload or delayed analysis.
     """
-    print("--- VIDEO UPLOAD STARTED ---")
 
     # Validate extension
     file_extension = video_file.filename.split(".")[-1].lower()
@@ -131,7 +178,6 @@ async def upload_video_only(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
 
-    print(f"✅ Video saved to {file_path} for user {current_user.email}")
 
     # Store entry WITHOUT emotion analysis
     mood_entry = models.MoodEntry(
@@ -149,7 +195,6 @@ async def upload_video_only(
     db.commit()
     db.refresh(mood_entry)
 
-    status=models.EntryStatus.uploaded
 
     return {
         "message": "✅ Video uploaded successfully!",

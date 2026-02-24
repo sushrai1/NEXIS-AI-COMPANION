@@ -89,31 +89,30 @@ def get_dashboard_summary(
         .all()
     )
 
-    first = checkins[0]
-
-    if first.emotion:
-        current_mood = first.emotion.capitalize()
-    elif first.status == models.EntryStatus.uploaded:
-        current_mood = "Pending Analysis"
-    elif first.status == models.EntryStatus.failed:
-        current_mood = "Analysis Failed"
-    else:
+    if not checkins:
         current_mood = None
-
-    recent_emotions = [c.emotion for c in reversed(checkins) if c.emotion]
-    if recent_emotions:
-        trend_text = get_emotion_trend(recent_emotions)
+        trend_text = "No check-ins yet"
     else:
-        trend_text = "No analyzed check-ins"
+        first = checkins[0]
+        if first.emotion:
+            current_mood = first.emotion.capitalize()
+        elif first.status == models.EntryStatus.uploaded:
+            current_mood = "Pending Analysis"
+        elif first.status == models.EntryStatus.failed:
+            current_mood = "Analysis Failed"
+        else:
+            current_mood = None
 
-    # 3️⃣ Count alerts = number of negative emotions in last 7 days
-    seven_days_ago = datetime.utcnow() - timedelta(days=7)
-    negative_emotions = {"sad", "angry", "fearful", "disgust"}
+        recent_emotions = [c.emotion for c in reversed(checkins) if c.emotion]
+        trend_text = get_emotion_trend(recent_emotions) if recent_emotions else "No analyzed check-ins"
+
+    # 3️⃣ Count unacknowledged alerts from the Alert table (same source of truth as AlertsPage)
     alerts_count = (
-        db.query(models.MoodEntry)
-        .filter(models.MoodEntry.user_id == current_user.id)
-        .filter(models.MoodEntry.emotion.in_(negative_emotions))
-        .filter(models.MoodEntry.created_at >= seven_days_ago)
+        db.query(models.Alert)
+        .filter(
+            models.Alert.owner_id == current_user.id,
+            models.Alert.status == models.AlertStatus.new,
+        )
         .count()
     )
 
