@@ -1,0 +1,865 @@
+% ============================================================
+%  NEXIS AI Companion — Methodology
+%  Compile with: pdflatex methodology.tex
+% ============================================================
+\documentclass[12pt,a4paper]{article}
+
+% --- Packages ---
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{enumitem}
+\usepackage{float}
+\usepackage{titlesec}
+\usepackage{parskip}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+
+% --- Code listing style ---
+\lstset{
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue}\bfseries,
+  commentstyle=\color{gray},
+  stringstyle=\color{orange!80!black},
+  backgroundcolor=\color{gray!8},
+  frame=single,
+  rulecolor=\color{gray!40},
+  breaklines=true,
+  showstringspaces=false,
+  captionpos=b,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  numbersep=6pt,
+  language=Python
+}
+
+% --- Hyperlink setup ---
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!70!black,
+  urlcolor=blue!70!black,
+  citecolor=blue!70!black
+}
+
+% ============================================================
+\begin{document}
+
+% --- Title ---
+\begin{center}
+  {\LARGE \textbf{NEXIS AI Companion}}\\[6pt]
+  {\large \textbf{Methodology}}\\[4pt]
+  {\normalsize Multimodal Emotion Recognition for Mental Health Monitoring}\\[2pt]
+  \rule{\linewidth}{0.4pt}
+\end{center}
+
+\tableofcontents
+\newpage
+
+% ============================================================
+\section{Introduction and System Overview}
+\label{sec:intro}
+% ============================================================
+
+NEXIS AI Companion is a mental health support platform that analyses a user's
+emotional state from \textit{three simultaneous modalities}—facial video,
+speech audio, and written text—and uses the fused result to track mood over
+time, generate risk alerts for negative emotional states, and produce
+structured weekly wellness reports.
+
+The system is built on a decoupled architecture:
+
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{Backend:} Python~3.9+, FastAPI, PostgreSQL, and a stack of
+        pre-trained HuggingFace Transformer models combined with a custom
+        multi-layer perceptron (MLP) meta-classifier.
+  \item \textbf{Frontend:} React (Vite), Tailwind~CSS, Chart.js, served on
+        port 5173 and communicating with the backend via REST API.
+\end{itemize}
+
+The remainder of this methodology is structured as follows:
+Section~\ref{sec:architecture} describes the overall system architecture;
+Section~\ref{sec:models} details each modality-specific model;
+Section~\ref{sec:preprocessing} covers audio and video preprocessing;
+Section~\ref{sec:fusion} explains the late-fusion concatenation strategy and
+the disgust override gate;
+Section~\ref{sec:training} outlines the MLP training configuration and
+dataset;
+Section~\ref{sec:backend} documents the API design, background task pipeline,
+and database schema;
+Section~\ref{sec:risk} explains the 14-day distress scoring and risk
+composite;
+Section~\ref{sec:sentiment} describes text sentiment pre-screening with
+VADER; and
+Section~\ref{sec:security} covers authentication and data security.
+
+% ============================================================
+\section{System Architecture}
+\label{sec:architecture}
+% ============================================================
+
+\subsection{High-Level Component Diagram}
+
+The end-to-end inference path begins at the user's browser and terminates at
+a persistent result in PostgreSQL (Figure~\ref{fig:arch}).
+
+\begin{figure}[H]
+\centering
+\begin{verbatim}
+  User Browser
+    |
+    | POST /check-in/multimodal
+    |   (multipart: video_file + text_input)
+    v
+  FastAPI  (checkin.py)
+    |  1. Save video  ->  backend/uploads/<uuid>.<ext>
+    |  2. INSERT MoodEntry(status=uploaded) -> PostgreSQL
+    |  3. Return HTTP 202 Accepted  (immediately)
+    |  4. Enqueue BackgroundTask
+    v
+  _run_analysis_in_background()    (own SQLAlchemy thread)
+    |
+    v
+  predict_emotion()                (utils/predict_emotion.py)
+    |
+    +-- [no text?] -> Whisper ASR   (openai-whisper)
+    |
+    +-- extract_features()
+    |     |-- ffmpeg  -> 16 kHz mono WAV
+    |     |-- pydub   -> float32 waveform
+    |     |-- Wav2Vec2 (facebook/wav2vec2-base) -> 7-dim audio vector
+    |     |-- DistilRoBERTa (j-hartmann/...)    -> 7-dim text vector
+    |     |-- MoviePy sample 5-10 frames
+    |     |-- ViT (dima806/facial_emotions_...) -> 7-dim video vector
+    |     |-- normalize + renormalize
+    |     |-- disgust-gate override
+    |     `-- concatenate -> 21-dim feature vector
+    |
+    `-- sklearn MLP -> emotion label + confidence
+          |
+          v
+    UPDATE MoodEntry(emotion, confidence, probabilities, status=analyzed)
+    If negative emotion -> INSERT Alert
+\end{verbatim}
+\caption{End-to-end inference architecture of the NEXIS AI Companion.}
+\label{fig:arch}
+\end{figure}
+
+\subsection{Decoupled Request Handling}
+
+A key design decision is to return \texttt{HTTP~202~Accepted} immediately
+after saving the video and creating the database record. The ML inference
+workload (which can take several seconds on CPU) is then executed
+asynchronously in a FastAPI \texttt{BackgroundTask}. This ensures that:
+
+\begin{enumerate}[leftmargin=2em]
+  \item The ASGI event loop is never blocked, keeping all other API routes
+        responsive during inference.
+  \item The frontend can optimistically display the entry as
+        \textit{Pending Analysis} and poll for a status update.
+  \item The background task opens its own SQLAlchemy \texttt{Session} via
+        \texttt{SessionLocal()} to guarantee thread safety.
+\end{enumerate}
+
+\subsection{MoodEntry State Machine}
+
+Each check-in entry progresses through a three-state lifecycle:
+
+\begin{center}
+\texttt{uploaded} $\;\longrightarrow\;$ \texttt{analyzed}\\
+\texttt{uploaded} $\;\longrightarrow\;$ \texttt{failed}
+\end{center}
+
+If \texttt{predict\_emotion()} raises an unhandled exception, the entry is
+marked \texttt{failed} and the traceback is stored in the
+\texttt{analysis\_error} column for debugging.
+
+% ============================================================
+\section{Modality-Specific Model Architectures}
+\label{sec:models}
+% ============================================================
+
+The system employs four pre-trained models as \textit{frozen feature
+extractors}; none of them are fine-tuned. All four are loaded once at server
+startup and kept in memory for the lifetime of the process
+(Table~\ref{tab:models}).
+
+\begin{table}[H]
+\centering
+\caption{Pre-trained models used as frozen feature extractors.}
+\label{tab:models}
+\begin{tabular}{llll}
+\toprule
+\textbf{Modality} & \textbf{Model ID (HuggingFace)} & \textbf{Architecture} & \textbf{Output} \\
+\midrule
+Facial Video & \texttt{dima806/facial\_emotions\_image\_detection} & ViT & 7-class softmax \\
+Speech Audio & \texttt{facebook/wav2vec2-base} & Wav2Vec2 & Latent hidden states \\
+Text & \texttt{j-hartmann/emotion-english-distilroberta-base} & DistilRoBERTa & 7-class softmax \\
+Transcription & \texttt{openai/whisper-base} & Whisper Encoder-Decoder & Transcript string \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Facial Emotion Recognition — Vision Transformer (ViT)}
+
+The \texttt{dima806/facial\_emotions\_image\_detection} model is a
+Vision Transformer (ViT) fine-tuned specifically for facial emotion
+recognition. It accepts a single \texttt{PIL.Image} object and outputs a
+softmax probability distribution over a set of emotion classes. The
+\texttt{AutoImageProcessor} handles resizing, normalisation, and patch
+tokenisation automatically before feeding the image into the transformer
+encoder. The output \texttt{logits} are passed through \texttt{softmax} to
+obtain per-class probabilities:
+
+\begin{lstlisting}[caption={ViT inference for a single frame.}]
+inputs = processor(images=pil_image, return_tensors="pt").to(device)
+with torch.no_grad():
+    logits = model(**inputs).logits
+probs = torch.nn.functional.softmax(logits, dim=-1).cpu().numpy()[0]
+labels = model.config.id2label
+return {labels[i]: float(probs[i]) for i in range(len(probs))}
+\end{lstlisting}
+
+\subsection{Speech Emotion Feature Extraction — Wav2Vec2}
+
+\texttt{facebook/wav2vec2-base} is a self-supervised speech model trained
+with contrastive learning on unlabelled audio. Rather than using a
+fine-tuned classification head, NEXIS extracts the raw
+\texttt{last\_hidden\_state} tensor and performs \textit{mean and standard
+deviation pooling} to obtain a fixed-size embedding:
+
+\begin{lstlisting}[caption={Wav2Vec2 pooling to produce a latent audio vector.}]
+inputs = processor(waveform, sampling_rate=16000,
+                   return_tensors="pt", padding=True)
+with torch.no_grad():
+    hidden = model(**inputs).last_hidden_state  # [1, T, 768]
+
+mean = hidden.mean(dim=1)                       # [1, 768]
+std  = hidden.std(dim=1)                        # [1, 768]
+emb  = torch.cat([mean, std], dim=1)            # [1, 1536]
+emb  = emb.squeeze().cpu().numpy()
+\end{lstlisting}
+
+The first seven dimensions of this 1536-dimensional embedding are extracted
+and treated as proxy ``emotion activations'' for the seven unified labels.
+These are raw latent activations—not semantic probabilities—but the MLP
+meta-classifier learns to interpret them appropriately during training.
+
+\subsection{Text Emotion Classification — DistilRoBERTa}
+
+\texttt{j-hartmann/emotion-english-distilroberta-base} is a DistilRoBERTa
+model fine-tuned on English text for multi-class emotion classification. Its
+label vocabulary uses GoEmotions-style names (\textit{joy, sadness, anger,
+fear, neutral, surprise, disgust}), which are remapped to the NEXIS unified
+label set (see Section~\ref{sec:preprocessing}). The tokeniser handles
+input truncation and padding automatically:
+
+\begin{lstlisting}[caption={DistilRoBERTa text classification.}]
+inputs = processor(text_input, return_tensors="pt",
+                   truncation=True, padding=True).to(device)
+with torch.no_grad():
+    logits = model(**inputs).logits
+probs = torch.nn.functional.softmax(logits, dim=-1).cpu().numpy()[0]
+\end{lstlisting}
+
+\subsection{Automatic Speech Recognition — Whisper}
+
+When a check-in includes a video but no textual input, the system
+transcribes the audio track using \texttt{openai/whisper-base} (the
+multilingual, base-size Whisper Encoder-Decoder model). The audio is first
+extracted to a temporary 16~kHz mono WAV file via FFmpeg, then passed to
+\texttt{whisper\_model.transcribe()}:
+
+\begin{lstlisting}[caption={Automatic transcription when text input is absent.}]
+result = whisper_model.transcribe(temp_wav_path)
+transcript = result.get("text", "").strip()
+\end{lstlisting}
+
+The resulting transcript is then used as the text modality input for the
+DistilRoBERTa classifier.
+
+\subsection{MLP Meta-Classifier}
+
+The meta-classifier is a \textbf{Multi-Layer Perceptron} implemented with
+\texttt{sklearn.neural\_network.MLPClassifier} and serialised to
+\texttt{metamodels/emotion\_model.pkl} alongside its
+\texttt{LabelEncoder} (\texttt{metamodels/emotion\_encoder.pkl}).
+
+\subsubsection{Input}
+
+The classifier receives a flat 21-dimensional feature vector assembled by
+concatenating the three modality probability vectors (each 7-dimensional)
+in the order \textbf{Video, Audio, Text}:
+
+\begin{equation}
+\mathbf{x} = \bigl[\underbrace{v_0, \ldots, v_6}_{\text{Video (7)}},\;
+               \underbrace{a_0, \ldots, a_6}_{\text{Audio (7)}},\;
+               \underbrace{t_0, \ldots, t_6}_{\text{Text (7)}}\bigr]
+\in \mathbb{R}^{21}
+\label{eq:featurevec}
+\end{equation}
+
+where the index order within each slice follows the unified label set:
+\textit{happy, sad, angry, fearful, neutral, surprise, disgust}.
+
+\subsubsection{Output}
+
+The MLP produces a 7-class posterior distribution
+$\hat{\mathbf{p}} = [\hat{p}_0, \ldots, \hat{p}_6]$ from which the
+dominant emotion label and its confidence are extracted:
+
+\begin{lstlisting}[caption={MLP inference.}]
+probs      = model.predict_proba([features])[0]  # shape: (7,)
+pred_index = np.argmax(probs)
+pred_label = le.inverse_transform([pred_index])[0]
+confidence = probs[pred_index] * 100             # percentage
+\end{lstlisting}
+
+% ============================================================
+\section{Preprocessing Pipelines}
+\label{sec:preprocessing}
+% ============================================================
+
+\subsection{Audio Extraction — FFmpeg}
+
+FFmpeg is invoked via Python's \texttt{subprocess.run()} using an
+\textit{explicit argument list} (no \texttt{shell=True}) to avoid
+Windows path-quoting issues. Audio extraction is performed twice: once for
+Whisper ASR and once for Wav2Vec2 feature extraction. Both calls use
+identical parameters (Table~\ref{tab:ffmpeg}):
+
+\begin{lstlisting}[caption={FFmpeg audio extraction command.}]
+subprocess.run([
+    "ffmpeg", "-i", str(video_path),
+    "-vn",              # strip video stream
+    "-acodec", "pcm_s16le",   # uncompressed 16-bit PCM
+    "-ar", "16000",     # resample to 16 000 Hz
+    "-ac", "1",         # downmix to mono
+    temp_audio_path,
+    "-y", "-hide_banner", "-loglevel", "error"
+], check=True)
+\end{lstlisting}
+
+\begin{table}[H]
+\centering
+\caption{FFmpeg audio extraction parameters.}
+\label{tab:ffmpeg}
+\begin{tabular}{lll}
+\toprule
+\textbf{Parameter} & \textbf{Value} & \textbf{Rationale} \\
+\midrule
+\texttt{-acodec} & \texttt{pcm\_s16le} & Uncompressed PCM required by \texttt{pydub} and Wav2Vec2 \\
+\texttt{-ar} & \texttt{16000} Hz & Wav2Vec2 and Whisper are both trained at 16~kHz \\
+\texttt{-ac} & \texttt{1} (mono) & Both models require single-channel audio \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+After extraction, \texttt{pydub.AudioSegment} reads the WAV file and converts
+the integer sample array to \texttt{numpy.float32}:
+
+\begin{lstlisting}[caption={Conversion from WAV to float32 NumPy array.}]
+audio_seg = AudioSegment.from_wav(temp_audio_path)
+waveform  = np.array(audio_seg.get_array_of_samples()).astype(np.float32)
+os.remove(temp_audio_path)   # clean up immediately
+\end{lstlisting}
+
+\subsection{Video Frame Sampling — MoviePy}
+
+\texttt{moviepy.VideoFileClip} is used to sample individual frames at
+\textit{adaptively-spaced timestamps} proportional to the clip duration:
+
+\begin{lstlisting}[caption={Adaptive frame sampling with MoviePy.}]
+with VideoFileClip(video_path) as clip:
+    duration   = clip.duration
+    num_frames = min(10, max(5, int(duration)))
+    timestamps = np.linspace(0.1, duration - 0.1, num=num_frames)
+    frame_preds = [
+        get_prediction_probabilities(
+            face_m, face_p,
+            Image.fromarray(clip.get_frame(t)), "image"
+        )
+        for t in timestamps
+    ]
+\end{lstlisting}
+
+\begin{table}[H]
+\centering
+\caption{Frame-sampling parameters.}
+\label{tab:frames}
+\begin{tabular}{lll}
+\toprule
+\textbf{Parameter} & \textbf{Value} & \textbf{Rationale} \\
+\midrule
+\texttt{num\_frames} & $\max(5,\,\min(10,\,\lfloor\text{duration}\rfloor))$ & Proportional to clip length; at least 5, at most 10 \\
+\texttt{timestamps}  & \texttt{linspace(0.1, duration$-$0.1)} & Uniform spacing; 0.1~s offsets avoid blank/cut frames \\
+Frame format & \texttt{PIL.Image} from \texttt{get\_frame(t)} & ViT processor requires a PIL image \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The per-frame emotion probability distributions from valid (non-empty)
+predictions are averaged element-wise to produce a single 7-dimensional
+video vector:
+
+\begin{equation}
+v_{\ell} = \frac{1}{N}\sum_{i=1}^{N} p^{(i)}_{\ell},
+\qquad \ell \in \text{UNIFIED\_LABELS}
+\end{equation}
+
+where $N$ is the number of valid frame predictions and $p^{(i)}_{\ell}$
+is the normalised probability for label $\ell$ from frame $i$.
+
+\subsection{Label Remapping and Renormalisation}
+\label{sec:labelnorm}
+
+Each modality uses a different native label vocabulary. A
+\texttt{normalize\_probs()} function maps each model's raw output
+into the shared seven-class label space
+$\mathcal{L} = \{$\textit{happy, sad, angry, fearful, neutral, surprise, disgust}$\}$:
+
+\begin{lstlisting}[caption={Label remapping dictionaries.}]
+UNIFIED_LABELS = ['happy','sad','angry','fearful',
+                  'neutral','surprise','disgust']
+
+# DistilRoBERTa uses GoEmotions naming convention
+text_map = {
+    'joy':     'happy',   'sadness':  'sad',
+    'anger':   'angry',   'fear':     'fearful',
+    'neutral': 'neutral', 'surprise': 'surprise',
+    'disgust': 'disgust'
+}
+
+# ViT labels already match the unified set (identity map)
+video_map = {e: e for e in UNIFIED_LABELS}
+\end{lstlisting}
+
+After remapping, each probability distribution is L\textsubscript{1}-renormalised
+to ensure it sums to 1:
+
+\begin{equation}
+\hat{p}_{\ell} = \frac{p_{\ell}}{\displaystyle\sum_{j \in \mathcal{L}} p_{j}}
+\end{equation}
+
+% ============================================================
+\section{Multimodal Fusion Strategy}
+\label{sec:fusion}
+% ============================================================
+
+\subsection{Late Fusion by Concatenation}
+
+NEXIS employs a \textbf{late fusion} paradigm. Each modality is processed
+entirely independently through its own pre-trained encoder and normalisation
+pipeline. The resulting three 7-dimensional probability vectors are then
+\textit{concatenated} to produce the 21-dimensional joint feature vector
+$\mathbf{x}$ defined in Equation~\eqref{eq:featurevec}:
+
+\begin{lstlisting}[caption={Late fusion concatenation (the critical line in predict\_emotion.py).}]
+return (
+    [video[label] for label in UNIFIED_LABELS] +   # dims 0-6
+    [audio[label] for label in UNIFIED_LABELS] +   # dims 7-13
+    [text[label]  for label in UNIFIED_LABELS]     # dims 14-20
+)
+\end{lstlisting}
+
+Late fusion is chosen over early or intermediate fusion because:
+\begin{enumerate}[leftmargin=2em]
+  \item Each modality has a fundamentally different data type (image, waveform,
+        token sequence), making early fusion architecturally complex.
+  \item The pre-trained encoders are frozen; their internal representations
+        are not adapted to each other.
+  \item Late fusion retains interpretability: each 7-dimensional slice in
+        $\mathbf{x}$ corresponds directly to a specific modality's emotion
+        probability distribution.
+\end{enumerate}
+
+\subsection{Confidence-Based Disgust Override Gate}
+
+A hard deterministic rule acts as an override gate \textit{before} the MLP
+sees the feature vector. If the text modality detects \textit{disgust} with
+probability $\geq 0.80$, all three modality vectors are replaced with a
+one-hot distribution peaked at \textit{disgust}:
+
+\begin{lstlisting}[caption={Disgust gate override.}]
+def confidence_based_override(text_probs):
+    return text_probs.get("disgust", 0) >= 0.80
+
+if confidence_based_override(text):
+    for lbl in UNIFIED_LABELS:
+        val = 1.0 if lbl == 'disgust' else 0.0
+        audio[lbl] = val
+        video[lbl] = val
+        text[lbl]  = val
+\end{lstlisting}
+
+This rule handles cases where strong textual evidence of disgust is present
+but the facial or audio channels carry ambiguous or contradictory signals.
+The threshold of 0.80 was chosen empirically to minimise false activations
+while still catching clearly expressed disgust.
+
+% ============================================================
+\section{MLP Training Configuration}
+\label{sec:training}
+% ============================================================
+
+\subsection{Dataset — RAVDESS}
+
+The MLP meta-classifier was trained offline on the
+\textbf{RAVDESS} (Ryerson Audio-Visual Database of Emotional Speech and Song)
+dataset. RAVDESS contains 2452 audio-visual recordings from 24 professional
+North American actors (12 male, 12 female) expressing eight discrete emotions
+at two intensity levels.
+
+\begin{table}[H]
+\centering
+\caption{RAVDESS dataset properties and preprocessing for training.}
+\label{tab:ravdess}
+\begin{tabular}{ll}
+\toprule
+\textbf{Property} & \textbf{Details} \\
+\midrule
+Source dataset & RAVDESS (24 actors, 8 emotions, 2 intensities) \\
+Label mapping & 8 original labels $\rightarrow$ 7 unified (\textit{calm} merged into \textit{neutral}) \\
+Feature generation & All three frozen encoders run on each clip $\rightarrow$ 21-dim vector \\
+Training target & Ground-truth emotion from RAVDESS file-naming convention \\
+Reported accuracy & $\approx$89\% on held-out validation split \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Classifier Hyperparameters}
+
+\begin{table}[H]
+\centering
+\caption{Scikit-learn \texttt{MLPClassifier} configuration.}
+\label{tab:mlp}
+\begin{tabular}{ll}
+\toprule
+\textbf{Hyperparameter} & \textbf{Value / Details} \\
+\midrule
+Model class & \texttt{sklearn.neural\_network.MLPClassifier} \\
+Input dimensionality & 21 features \\
+Output classes & 7 (happy, sad, angry, fearful, neutral, surprise, disgust) \\
+Hidden layer activation & ReLU (default) \\
+Output activation & Softmax \\
+Loss function & Cross-entropy log-loss (internal to \texttt{MLPClassifier}) \\
+Early stopping & Enabled (\texttt{early\_stopping=True}) \\
+Validation fraction & 10\% of training data (default) \\
+Patience & \texttt{n\_iter\_no\_change}~=~10 consecutive epochs \\
+Serialisation & \texttt{joblib.dump()} $\rightarrow$ \texttt{emotion\_model.pkl} ($\approx$323~KB) \\
+Label encoding & \texttt{sklearn.preprocessing.LabelEncoder} $\rightarrow$ \texttt{emotion\_encoder.pkl} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Early Stopping Mechanism}
+
+Scikit-learn's early stopping implementation holds out a fraction of the
+training set as an \textit{internal validation set}. Training halts when
+the validation score does not improve for \texttt{n\_iter\_no\_change}
+consecutive iterations. At termination, the parameter weights from the
+epoch with the highest validation score are restored. This is especially
+important given the relatively modest size of RAVDESS: early stopping
+prevents the MLP from memorising the training set when trained for many
+epochs.
+
+\subsection{Device Selection}
+
+All inference is performed on GPU if one is available, falling back to CPU
+otherwise:
+
+\begin{lstlisting}[caption={Device selection.}]
+device = "cuda" if torch.cuda.is_available() else "cpu"
+\end{lstlisting}
+
+The MLP itself (scikit-learn) always uses CPU; only the HuggingFace
+Transformer-based encoders benefit from GPU acceleration.
+
+% ============================================================
+\section{Backend API and Integration}
+\label{sec:backend}
+% ============================================================
+
+\subsection{Framework and Structure}
+
+The backend is a \textbf{FastAPI} application with seven registered routers:
+
+\begin{table}[H]
+\centering
+\caption{Registered API routers.}
+\label{tab:routers}
+\begin{tabular}{lll}
+\toprule
+\textbf{Module} & \textbf{Prefix} & \textbf{Responsibility} \\
+\midrule
+\texttt{auth.py}          & \texttt{/auth}         & Registration, login, JWT issuance, account management \\
+\texttt{checkin.py}       & \texttt{/check-in}     & Video upload, background ML analysis, history retrieval \\
+\texttt{survey.py}        & \texttt{/survey}       & PHQ-9 mental health questionnaire submission and results \\
+\texttt{quick\_thought.py}& \texttt{/quick-thought}& Short journal entries with VADER sentiment scoring \\
+\texttt{dashboard.py}     & \texttt{/dashboard}    & Summary, weekly report, 14-day risk composite \\
+\texttt{alerts.py}        & \texttt{/alerts}       & Alert listing, acknowledgement, and backfill \\
+\texttt{connections.py}   & \texttt{/connections}  & Guardian/doctor account linking \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Database Models (SQLAlchemy ORM)}
+
+All persistent data is stored in a PostgreSQL database managed through
+SQLAlchemy ORM. The key models are:
+
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{User}: Stores credentials (\texttt{password\_hash} via
+        bcrypt), email, display name, and role (\texttt{user},
+        \texttt{guardian}, \texttt{doctor}).
+  \item \textbf{MoodEntry}: Per check-in record containing the video path,
+        optional text input, analysis status, predicted emotion, confidence,
+        and full probability distribution (JSON column).
+  \item \textbf{Alert}: Auto-generated or backfilled record linking a
+        negative \texttt{MoodEntry} to a user-visible alert with urgency
+        classification (\textit{Medium} or \textit{High}).
+  \item \textbf{SurveyResult}: Stores the total PHQ-9 score, per-question
+        answers (JSON), and interpretation string.
+  \item \textbf{QuickThought}: Short journal entry with a
+        floating-point VADER compound sentiment score.
+  \item \textbf{WeeklyReport}: Cached LLM-generated insight report (JSON
+        payload) scoped to a 14-day period, avoiding repeated Groq API calls.
+\end{itemize}
+
+\subsection{Alert Generation and Backfill}
+
+Alerts are created in two places:
+
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{Inline} — immediately inside \texttt{\_run\_analysis\_in\_background()} when the
+        predicted emotion is a member of
+        $\{\text{sad, angry, fearful, disgust}\}$.
+  \item \textbf{Backfill} — on every \texttt{GET /alerts} request, the
+        \texttt{\_backfill\_alerts()} function scans all analysed negative
+        \texttt{MoodEntry} rows that do not yet have a linked \texttt{Alert}
+        row and creates the missing records. This handles legacy entries and
+        any race conditions in the background task.
+\end{enumerate}
+
+Urgency is assigned as follows:
+
+\begin{equation}
+\text{urgency} =
+\begin{cases}
+\text{High}   & \text{if } e \in \{\text{fearful, angry}\} \\
+\text{Medium} & \text{if } e \in \{\text{sad, disgust}\}
+\end{cases}
+\end{equation}
+
+\subsection{JWT Authentication}
+
+All protected routes require an \texttt{Authorization: Bearer <token>} header.
+Tokens are issued at login using \texttt{python-jose} with the
+\texttt{HS256} algorithm and a configurable expiry
+(\texttt{ACCESS\_TOKEN\_EXPIRE\_MINUTES}). The dependency
+\texttt{get\_current\_user()} decodes the token, validates the subject claim,
+and returns the corresponding \texttt{User} ORM object—raising
+\texttt{HTTP~401} on any failure.
+
+% ============================================================
+\section{14-Day Distress Scoring and Risk Composite}
+\label{sec:risk}
+% ============================================================
+
+\subsection{Per-Entry Distress Score}
+
+For each analysed \texttt{MoodEntry}, the \texttt{compute\_daily\_score()}
+function produces a scalar distress score $s \in [0, 100]$:
+
+\begin{equation}
+s = 100 \times \bigl(0.7 \cdot p_{\text{neg}} \;+\; 0.3 \cdot (1 - c)\bigr)
+\end{equation}
+
+where $p_{\text{neg}} = \sum_{\ell \in \{\text{sad, angry, fearful, disgust}\}} p_\ell$
+is the total probability mass assigned to negative emotions, and
+$c \in [0, 1]$ is the normalised model confidence. The uncertainty penalty
+$(1 - c)$ ensures that low-confidence predictions are treated as riskier, as
+the model is less certain about the user's positive state.
+
+\subsection{14-Day Aggregate Statistics}
+
+The \texttt{aggregate\_last\_14\_days()} function computes the following
+statistics over all entries in the rolling 14-day window:
+
+\begin{table}[H]
+\centering
+\caption{14-day aggregate statistics returned by the dashboard.}
+\label{tab:agg}
+\begin{tabular}{ll}
+\toprule
+\textbf{Statistic} & \textbf{Definition} \\
+\midrule
+\texttt{avg\_score}    & Mean distress score across all entries \\
+\texttt{std\_dev}      & Standard deviation of distress scores \\
+\texttt{best}          & Minimum distress score (lowest distress) \\
+\texttt{worst}         & Maximum distress score (highest distress) \\
+\texttt{neg\_ratio}    & Fraction of entries with a predominant negative emotion \\
+\texttt{trend\_slope}  & $s_{\text{last}} - s_{\text{first}}$ (positive = worsening) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Weekly Risk Composite}
+
+The dashboard endpoint \texttt{GET /dashboard/weekly-report} computes a
+composite risk score by blending the 14-day aggregate with the PHQ-9
+questionnaire score (if available within the same 14-day window):
+
+\begin{equation}
+\text{risk} =
+\begin{cases}
+0.5 \cdot \overline{s} + 0.3 \cdot (r \times 100) + 0.2 \cdot s_{\text{PHQ}}
+  & \text{if PHQ-9 available} \\[4pt]
+0.6 \cdot \overline{s} + 0.4 \cdot (r \times 100)
+  & \text{otherwise}
+\end{cases}
+\end{equation}
+
+where $\overline{s}$ is the 14-day average distress score,
+$r$ is the negative ratio, and
+$s_{\text{PHQ}} = ({\text{PHQ-9 raw score}} / 27) \times 100$
+is the PHQ-9 score normalised to the same 100-point scale.
+
+\subsection{LLM-Generated Narrative Insights (Groq)}
+
+The weekly report is enriched with structured natural-language insights
+generated by the Groq API using the \texttt{llama-3.3-70b-versatile} model.
+The function \texttt{generate\_structured\_insights()} builds a JSON prompt
+containing the 14-day aggregate, the risk score, and the PHQ-9 result, and
+requests a structured JSON response with the following keys:
+\textit{summary}, \textit{mood\_direction}, \textit{key\_insights},
+\textit{suggestions}, \textit{strengths}, \textit{possible\_triggers}, and
+\textit{recommend\_followup}. Generated reports are cached as
+\texttt{WeeklyReport} rows in PostgreSQL to avoid redundant Groq API calls.
+
+% ============================================================
+\section{Quick Thought VADER Sentiment Scoring}
+\label{sec:sentiment}
+% ============================================================
+
+In addition to the multimodal video check-in, users can submit short
+free-text \textit{Quick Thoughts} (journal entries). These are scored
+immediately using the \textbf{VADER} (Valence Aware Dictionary and sEntiment
+Reasoner) lexicon-based sentiment analyser from the
+\texttt{vaderSentiment} library:
+
+\begin{lstlisting}[caption={VADER sentiment scoring for journal entries.}]
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+
+analyzer = SentimentIntensityAnalyzer()
+scores   = analyzer.polarity_scores(text_content)
+sentiment_score = scores["compound"]   # range: [-1.0, +1.0]
+\end{lstlisting}
+
+The compound score is stored in \texttt{QuickThought.sentiment\_score} and
+fed into the dashboard's \textit{Insight Message} generator, which maps the
+score to a human-readable qualitative statement about the user's current
+emotional state.
+
+VADER was chosen for journal entries over the transformer-based text model
+because it is:
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{Rule-based and instant:} No model inference latency; the
+        result is available synchronously within the request.
+  \item \textbf{Interpretable:} Positive and negative word contributions are
+        lexically defined, not latent.
+  \item \textbf{Calibrated for social text:} VADER handles punctuation,
+        capitalisation, and emoticons well, which is appropriate for
+        informal journal-style input.
+\end{itemize}
+
+% ============================================================
+\section{Security and Compliance}
+\label{sec:security}
+% ============================================================
+
+\subsection{Password Hashing}
+
+All passwords are hashed with \textbf{bcrypt} using \texttt{passlib}'s
+\texttt{CryptContext} before storage. No plaintext passwords are ever written
+to the database.
+
+\subsection{JWT Token Security}
+
+\begin{itemize}[leftmargin=1.5em]
+  \item Signed with \texttt{HS256} using a strong \texttt{SECRET\_KEY}
+        loaded from the \texttt{.env} file.
+  \item Carry \texttt{sub} (user email) and \texttt{role} claims scoped
+        per request.
+  \item Expiry is configurable via \texttt{ACCESS\_TOKEN\_EXPIRE\_MINUTES}.
+\end{itemize}
+
+\subsection{CORS Policy}
+
+The FastAPI application permits requests only from
+\texttt{http://localhost:5173} and \texttt{http://127.0.0.1:5173}
+(the Vite development server). All HTTP methods and headers are permitted
+within this origin list, and credentials (cookies) are allowed.
+
+\subsection{Background Processing as a Security Measure}
+
+Because ML inference runs asynchronously after the HTTP response is sent,
+the API response time is deterministic (save-file + INSERT). This prevents
+timing-based side-channel attacks that could otherwise reveal whether
+specific video content triggered a longer inference path.
+
+\subsection{Environment Variable Management}
+
+All secrets (database credentials, JWT secret, Groq API key) are loaded
+from a \texttt{.env} file via \texttt{python-dotenv} and accessed through
+\texttt{os.getenv()}. The application raises a \texttt{ValueError} at
+startup if any critical variable is absent, preventing silent misconfiguration.
+
+% ============================================================
+\section{Summary}
+\label{sec:summary}
+% ============================================================
+
+Table~\ref{tab:summary} provides a consolidated summary of the methodological
+choices made throughout the NEXIS AI Companion system.
+
+\begin{longtable}{p{4.5cm} p{9cm}}
+\caption{Summary of methodological choices in NEXIS.}
+\label{tab:summary} \\
+\toprule
+\textbf{Design Decision} & \textbf{Choice and Rationale} \\
+\midrule
+\endfirsthead
+\multicolumn{2}{c}{\tablename~\thetable{} (continued)}\\
+\toprule
+\textbf{Design Decision} & \textbf{Choice and Rationale} \\
+\midrule
+\endhead
+\midrule
+\multicolumn{2}{r}{\textit{Continued on next page}}\\
+\endfoot
+\bottomrule
+\endlastfoot
+Fusion strategy & Late fusion by concatenation, preserving modality independence and interpretability \\
+Facial encoder & Frozen ViT fine-tuned on FER-style images; pixel-level features handled by the pre-trained image processor \\
+Audio encoder & Frozen Wav2Vec2; mean+std pooling of hidden states provides a compact speech embedding without a fine-tuned head \\
+Text encoder & Frozen DistilRoBERTa; label remapping aligns its GoEmotions vocabulary to the NEXIS unified label set \\
+Meta-classifier & scikit-learn MLP with early stopping; compact, CPU-deployable, and achieves $\approx$89\% accuracy on RAVDESS \\
+ASR & Whisper-base; automatically transcribes audio when no text is provided \\
+Disgust gate & Hard rule at $\text{text disgust} \geq 0.80$; handles cases where facial/audio cues are ambiguous \\
+Async inference & FastAPI BackgroundTask returning HTTP 202; keeps the event loop unblocked \\
+Distress scoring & Weighted combination of negative probability mass and inverse confidence; PHQ-9 integrated when available \\
+Journal sentiment & VADER compound score; synchronous and interpretable for short informal text \\
+LLM insights & Groq Llama-3.3-70B; structured JSON prompt guarantees parseable output; reports cached in PostgreSQL \\
+Authentication & JWT (HS256) via python-jose + bcrypt password hashing \\
+Database & PostgreSQL with SQLAlchemy ORM; all ML outputs stored as JSON columns for flexible downstream access \\
+\end{longtable}
+
+\end{document}
