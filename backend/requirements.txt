@@ -70,9 +70,13 @@ watchfiles==1.1.0
 websockets==15.0.1
 xgboost==3.0.5
 
-transformers 
-torchaudio 
-moviepy 
-openai-whisper 
-ffmpeg-python 
+transformers
+torch
+torchaudio
+moviepy
+openai-whisper
+ffmpeg-python
+pydub
+groq
+vaderSentiment
 joblib
